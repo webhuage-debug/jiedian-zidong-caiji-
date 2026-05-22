@@ -43,9 +43,9 @@ Public Node Admin 是部署在 VPS 上的网页后台系统。v0.1.0 采用单�
 - `app_settings`：系统设置。
 - `app_logs`：运行日志。
 
-## 采集流程规划
+## 采集流程
 
-v0.2.0 实现：
+v0.2.0 已实现基础采集框架：
 
 1. 从允许的公开来源入口发现 URL。
 2. 检查来源缓存和 `next_allowed_at`，避免高频访问。
@@ -56,6 +56,13 @@ v0.2.0 实现：
 7. 保存采集任务统计。
 
 只采集公开内容，不访问私人仓库，不绕过登录，不做全网乱扫。
+
+模块位置：
+
+- `apps/api/src/collector/sourceDiscovery.ts`：公开来源发现。
+- `apps/api/src/collector/http.ts`：受限 HTTP 抓取。
+- `apps/api/src/collector/nodeParser.ts`：节点协议提取和哈希。
+- `apps/api/src/collector/collectionService.ts`：采集运行、来源缓存、去重入库。
 
 ## 测试流程规划
 

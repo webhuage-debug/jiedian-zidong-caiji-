@@ -15,6 +15,7 @@ WORKDIR /app
 ENV NODE_ENV=production
 COPY package.json package-lock.json* ./
 COPY apps/api/package.json apps/api/package.json
+COPY apps/web/package.json apps/web/package.json
 RUN npm install --omit=dev --workspace apps/api
 COPY --from=build /app/apps/api/dist apps/api/dist
 COPY --from=build /app/apps/web/dist apps/web/dist

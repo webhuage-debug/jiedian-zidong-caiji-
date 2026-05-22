@@ -69,7 +69,16 @@ v0.1.0 已有前端开关雏形。v0.6.0 需要完整实现：
 
 ## 采集限速
 
-后续采集功能必须遵守：
+v0.2.0 已加入基础限制：
+
+- `COLLECT_MAX_CONCURRENCY` 控制并发，默认 2。
+- `COLLECT_DAILY_MAX_RUNS` 控制每日最大采集次数，默认 6。
+- `COLLECT_MIN_INTERVAL_MINUTES` 控制同一来源重复访问间隔，默认 60 分钟。
+- `HTTP_TIMEOUT_SECONDS` 控制请求超时。
+- `COLLECT_MAX_BYTES` 控制单个来源最大读取大小。
+- 失败来源会进入更长冷却时间。
+
+采集功能必须继续遵守：
 
 - 只采集公开内容
 - 不访问私人仓库

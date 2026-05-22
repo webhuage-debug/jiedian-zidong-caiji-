@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS node_sources (
   last_checked_at TEXT,
   next_allowed_at TEXT,
   last_error TEXT,
+  content_hash TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -76,6 +77,18 @@ CREATE TABLE IF NOT EXISTS collection_runs (
   inserted_nodes INTEGER NOT NULL DEFAULT 0,
   error_count INTEGER NOT NULL DEFAULT 0,
   summary_json TEXT
+);
+
+CREATE TABLE IF NOT EXISTS collection_run_sources (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  collection_run_id INTEGER NOT NULL REFERENCES collection_runs(id) ON DELETE CASCADE,
+  source_id INTEGER REFERENCES node_sources(id) ON DELETE SET NULL,
+  url TEXT NOT NULL,
+  status TEXT NOT NULL,
+  raw_nodes INTEGER NOT NULL DEFAULT 0,
+  inserted_nodes INTEGER NOT NULL DEFAULT 0,
+  error TEXT,
+  fetched_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS test_runs (

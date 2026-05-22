@@ -2,7 +2,7 @@
 
 Public Node Admin 是一个部署在 Debian / Ubuntu VPS 上的个人自用网页后台系统，用来整理公开网络中的代理节点资源，并在后台完成采集、清洗、基础初筛、候选池管理、节点包导出和公开领取页管理。
 
-当前版本：v0.1.0 项目基础版。
+当前版本：v0.2.0 节点采集与解析版。
 
 ## 当前功能
 
@@ -20,10 +20,15 @@ Public Node Admin 是一个部署在 Debian / Ubuntu VPS 上的个人自用网�
 - `.env.example` 配置模板
 - `.gitignore` 和敏感文件检查脚本
 - 多 AI 接力文档体系
+- 公开来源发现和来源缓存
+- GitHub 公开仓库候选文件发现
+- 公开网页/文本/订阅 URL 种子采集
+- 节点协议链接提取：`vmess`、`vless`、`trojan`、`ss`、`ssr`、`hysteria2`、`hy2`、`tuic`
+- 完全相同节点去重并入库
+- 采集限速、请求超时、大小限制、失败重试、失败降频
 
 ## 规划功能
 
-- v0.2.0：公开来源发现、GitHub/网页/文本采集、节点协议识别、去重入库
 - v0.3.0：基础连通性测试、后台初筛延迟、失败剔除、候选节点池、延迟分布
 - v0.4.0：自定义数量导出、纯节点文件、加密 zip 节点包、批次管理
 - v0.5.0：公开领取页、口令验证、下载统计、反馈入口
@@ -78,6 +83,11 @@ npm run dev
 - `EXPORT_DIR`：后续节点包导出目录
 - `LOGIN_MAX_FAILURES`：登录失败锁定阈值
 - `LOGIN_LOCK_MINUTES`：登录失败锁定时间
+- `PUBLIC_SOURCE_SEEDS`：可选公开来源种子，多个 URL 用英文逗号分隔
+- `COLLECT_MAX_CONCURRENCY`：采集并发上限
+- `COLLECT_DAILY_MAX_RUNS`：每日最大采集次数
+- `COLLECT_MIN_INTERVAL_MINUTES`：同一来源最小重复访问间隔
+- `HTTP_TIMEOUT_SECONDS`：单次请求超时
 
 真实 `.env` 禁止提交到 GitHub。
 

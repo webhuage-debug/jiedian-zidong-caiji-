@@ -112,11 +112,20 @@ input {
   color: #fff;
   font-weight: 750;
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
 }
 
 .primary:disabled {
   opacity: 0.7;
   cursor: wait;
+}
+
+.primary.small {
+  min-height: 38px;
+  padding: 0 14px;
 }
 
 .error {
@@ -247,6 +256,10 @@ input {
   font-size: 18px;
 }
 
+.panel-title p {
+  margin: 4px 0 0;
+}
+
 .distribution {
   display: grid;
   gap: 12px;
@@ -277,6 +290,59 @@ input {
   line-height: 1.75;
 }
 
+.muted.compact {
+  line-height: 1.35;
+}
+
+.notice {
+  border: 1px solid #b8d9d7;
+  background: #eefaf8;
+  color: #145d62;
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin-bottom: 14px;
+}
+
+.table {
+  display: grid;
+  gap: 8px;
+}
+
+.table-head,
+.table-row {
+  display: grid;
+  gap: 10px;
+  align-items: center;
+  min-height: 34px;
+  padding: 0 10px;
+}
+
+.table-head {
+  color: #607179;
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.table-row {
+  border: 1px solid #e0e8ea;
+  border-radius: 6px;
+  background: #fbfcfc;
+}
+
+.run-grid {
+  grid-template-columns: 70px 1fr 1fr 1fr 1fr 1fr;
+}
+
+.source-grid {
+  grid-template-columns: 90px 90px 70px 70px minmax(0, 1fr);
+}
+
+.truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 @media (max-width: 860px) {
   .app-shell {
     grid-template-columns: 1fr;
@@ -297,6 +363,11 @@ input {
 
   .metrics {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .run-grid,
+  .source-grid {
+    grid-template-columns: 1fr 1fr;
   }
 }
 

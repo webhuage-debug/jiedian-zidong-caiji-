@@ -1,5 +1,97 @@
 # Handoff Log
 
+## 2026-05-23 v0.2.0
+
+### 本次开发时间
+
+- 2026-05-23 Asia/Shanghai
+
+### 本次开发目标
+
+- 完成公开节点来源搜索、GitHub 公开内容采集、公开网页/文本采集、节点协议识别、基础去重、节点入库、来源记录、采集日志、采集限速、失败重试、来源缓存。
+
+### 已完成功能
+
+- 添加 GitHub 公共仓库搜索和候选文件发现。
+- 支持 `PUBLIC_SOURCE_SEEDS` 配置公开网页、文本、订阅 URL 种子。
+- 添加受限 HTTP 抓取，支持超时和最大字节限制。
+- 支持提取 `vmess`、`vless`、`trojan`、`ss`、`ssr`、`hysteria2`、`hy2`、`tuic` 节点链接。
+- 节点内容使用 SHA-256 完全去重。
+- 采集结果写入 `nodes`，默认状态为 `pending_test`。
+- 来源写入 `node_sources`，记录成功、失败、冷却时间和内容哈希。
+- 采集任务写入 `collection_runs`。
+- 来源级采集结果写入 `collection_run_sources`。
+- 后台新增触发采集、查看来源缓存和采集历史的基础页面。
+- 后台 UI 保持中文，登录页密码默认隐藏并可切换显示。
+- 配置 Git remote：`https://github.com/webhuage-debug/jiandiancaiji.git`。
+
+### 修改文件
+
+- 修改 `package.json`
+- 修改 `.env.example`
+- 修改 `apps/api/package.json`
+- 修改 `apps/api/src/config.ts`
+- 修改 `apps/api/src/db.ts`
+- 修改 `apps/api/src/schema.ts`
+- 修改 `apps/api/src/routes.ts`
+- 修改 `apps/web/package.json`
+- 修改 `apps/web/src/main.tsx`
+- 修改 `apps/web/src/styles.css`
+- 修改 `README.md`
+- 修改 `docs/ARCHITECTURE.md`
+- 修改 `docs/CHANGELOG.md`
+- 修改 `docs/DEVELOPMENT_LOG.md`
+- 修改 `docs/HANDOFF.md`
+- 修改 `docs/SECURITY.md`
+- 修改 `docs/TODO.md`
+- 新增 `apps/api/src/collector/nodeParser.ts`
+- 新增 `apps/api/src/collector/sourceDiscovery.ts`
+- 新增 `apps/api/src/collector/http.ts`
+- 新增 `apps/api/src/collector/collectionService.ts`
+
+### 删除文件
+
+- 无
+
+### 运行测试
+
+- 已执行：`node scripts/check-sensitive.mjs`，使用 Codex bundled Node 路径执行。
+- 已执行：UTF-8 内容扫描，确认 `apps/web/src/main.tsx`、`apps/api/src/routes.ts` 无替换字符和明显乱码片段。
+- 未执行：`npm install`，当前环境没有可用 `npm` 命令。
+- 未执行：`npm run typecheck`，当前环境没有可用 `npm` 命令。
+- 未执行：`npm run build`，当前环境没有可用 `npm` 命令。
+- 未执行：Docker 构建，当前环境没有可用 `docker` 命令。
+
+### 测试结果
+
+- 敏感文件检查通过：`Sensitive file check passed for 32 tracked or pending files.`
+- 未发现真实 `.env`、Token、数据库、日志、节点包或运行数据。
+- 因本地环境缺少 `npm` 和 `docker`，依赖安装、类型检查、构建和真实采集需在 VPS 或 Docker 环境继续验证。
+
+### 当前问题
+
+- 当前环境无法执行 npm/Docker 构建验证。
+- 真实采集依赖公网访问和 GitHub API，需在 VPS 或 Docker 环境验证。
+
+### 下一步建议
+
+- v0.3.0 实现基础连通性测试、失败剔除、候选节点池和延迟分布。
+- 在 v0.2.0 部署后观察 GitHub API 限制和来源质量，再微调查询词。
+
+### 敏感信息检查
+
+- 本阶段不包含真实 `.env`、Token、数据库、节点包、运行日志。
+- 节点数据只会在运行时写入 SQLite，不提交到 GitHub。
+
+### Git commit 信息
+
+- 已本地提交：`6263387 feat: add v0.2.0 public source collector`
+
+### 是否已 push 到 GitHub
+
+- 未 push 成功。已配置 `origin` 为 `https://github.com/webhuage-debug/jiandiancaiji.git`，但当前环境执行 `git push -u origin codex/v0.2.0-collector` 失败：`Could not resolve host: github.com`。
+- 需要在网络/DNS 可访问 GitHub 的环境重试 push。
+
 ## 2026-05-23 v0.1.0
 
 ### 本次开发时间
