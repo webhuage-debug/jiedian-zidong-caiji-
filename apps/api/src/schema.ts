@@ -106,6 +106,18 @@ CREATE TABLE IF NOT EXISTS test_runs (
   summary_json TEXT
 );
 
+CREATE TABLE IF NOT EXISTS node_test_results (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  test_run_id INTEGER NOT NULL REFERENCES test_runs(id) ON DELETE CASCADE,
+  node_id INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+  status TEXT NOT NULL,
+  latency_ms INTEGER,
+  failure_reason TEXT,
+  tested_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_node_test_results_node ON node_test_results(node_id, tested_at);
+
 CREATE TABLE IF NOT EXISTS export_batches (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   batch_code TEXT NOT NULL UNIQUE,

@@ -337,6 +337,10 @@ input {
   grid-template-columns: 90px 90px 70px 70px minmax(0, 1fr);
 }
 
+.node-grid {
+  grid-template-columns: 80px 120px 130px 90px minmax(0, 1fr);
+}
+
 .truncate {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -366,7 +370,8 @@ input {
   }
 
   .run-grid,
-  .source-grid {
+  .source-grid,
+  .node-grid {
     grid-template-columns: 1fr 1fr;
   }
 }

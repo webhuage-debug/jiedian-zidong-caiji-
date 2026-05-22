@@ -1,6 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { Database, Eye, EyeOff, Gauge, GitBranch, LogOut, Play, ShieldCheck, Video } from "lucide-react";
+import { Activity, Database, Eye, EyeOff, Gauge, GitBranch, LogOut, Play, ShieldCheck, Video } from "lucide-react";
 import "./styles.css";
 
 type AuthStatus = {
@@ -31,6 +31,31 @@ type CollectionRun = {
   deduped_nodes: number;
   inserted_nodes: number;
   error_count: number;
+};
+
+type TestRun = {
+  id: number;
+  status: string;
+  started_at: string;
+  finished_at?: string;
+  tested_nodes: number;
+  passed_nodes: number;
+  failed_nodes: number;
+  removed_nodes: number;
+  min_latency_ms?: number;
+  avg_latency_ms?: number;
+  max_latency_ms?: number;
+};
+
+type NodeItem = {
+  id: number;
+  protocol: string;
+  source_type?: string;
+  collected_at: string;
+  last_tested_at?: string;
+  latency_ms?: number;
+  status: string;
+  failure_reason?: string;
 };
 
 type SourceItem = {
@@ -126,19 +151,26 @@ function Dashboard({ user, onLogout }: { user: { username: string }; onLogout: (
   const [summary, setSummary] = React.useState<Summary | null>(null);
   const [sources, setSources] = React.useState<SourceItem[]>([]);
   const [runs, setRuns] = React.useState<CollectionRun[]>([]);
+  const [testRuns, setTestRuns] = React.useState<TestRun[]>([]);
+  const [nodes, setNodes] = React.useState<NodeItem[]>([]);
   const [videoMode, setVideoMode] = React.useState(false);
   const [collecting, setCollecting] = React.useState(false);
+  const [testing, setTesting] = React.useState(false);
   const [notice, setNotice] = React.useState("");
 
   const refresh = React.useCallback(async () => {
-    const [summaryRes, sourcesRes, runsRes] = await Promise.all([
+    const [summaryRes, sourcesRes, runsRes, testRunsRes, nodesRes] = await Promise.all([
       fetch("/api/dashboard/summary"),
       fetch("/api/sources"),
-      fetch("/api/collection-runs")
+      fetch("/api/collection-runs"),
+      fetch("/api/test-runs"),
+      fetch("/api/nodes?limit=8")
     ]);
     setSummary(await summaryRes.json());
     setSources((await sourcesRes.json()).items ?? []);
     setRuns((await runsRes.json()).items ?? []);
+    setTestRuns((await testRunsRes.json()).items ?? []);
+    setNodes((await nodesRes.json()).items ?? []);
   }, []);
 
   React.useEffect(() => {
@@ -164,6 +196,24 @@ function Dashboard({ user, onLogout }: { user: { username: string }; onLogout: (
     await refresh();
   }
 
+  async function runTester() {
+    setTesting(true);
+    setNotice("");
+    const res = await fetch("/api/test-runs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ limit: 100 })
+    });
+    const data = await res.json();
+    setTesting(false);
+    if (!res.ok) {
+      setNotice(data.message ?? "测试失败");
+      return;
+    }
+    setNotice(`本次测试 ${data.summary.testedNodes} 条，通过 ${data.summary.passedNodes} 条，失败剔除 ${data.summary.failedNodes} 条。`);
+    await refresh();
+  }
+
   const displayUser = videoMode ? "已隐藏" : user.username;
 
   return (
@@ -178,7 +228,7 @@ function Dashboard({ user, onLogout }: { user: { username: string }; onLogout: (
         <header className="topbar">
           <div>
             <h1>首页仪表盘</h1>
-            <p>v0.2.0 采集版：公开来源发现、节点提取、去重和入库。</p>
+            <p>v0.3.0 测试版：采集、解析、去重、基础连通性测试和候选池。</p>
           </div>
           <div className="top-actions">
             <button className={videoMode ? "icon active" : "icon"} onClick={() => setVideoMode((value) => !value)} title="公开视频模式">
@@ -224,6 +274,57 @@ function Dashboard({ user, onLogout }: { user: { username: string }; onLogout: (
               </div>
             ))}
             {!runs.length && <p className="muted">暂无采集任务记录。</p>}
+          </div>
+        </section>
+
+        <section className="panel">
+          <div className="panel-title">
+            <div>
+              <h2>基础测试</h2>
+              <p className="muted compact">只做后台初筛 TCP 连通性测试，失败节点不进入候选池。</p>
+            </div>
+            <button className="primary small" onClick={runTester} disabled={testing}>
+              <Activity size={16} />
+              {testing ? "测试中..." : "开始测试"}
+            </button>
+          </div>
+          <div className="table">
+            <div className="table-head run-grid">
+              <span>任务</span><span>状态</span><span>测试</span><span>通过</span><span>失败</span><span>均值</span>
+            </div>
+            {testRuns.slice(0, 6).map((run) => (
+              <div className="table-row run-grid" key={run.id}>
+                <span>#{run.id}</span>
+                <span>{run.status}</span>
+                <span>{run.tested_nodes}</span>
+                <span>{run.passed_nodes}</span>
+                <span>{run.failed_nodes}</span>
+                <span>{run.avg_latency_ms ? `${run.avg_latency_ms}ms` : "-"}</span>
+              </div>
+            ))}
+            {!testRuns.length && <p className="muted">暂无测试任务记录。</p>}
+          </div>
+        </section>
+
+        <section className="panel">
+          <div className="panel-title">
+            <h2>节点池预览</h2>
+            <Activity size={18} />
+          </div>
+          <div className="table">
+            <div className="table-head node-grid">
+              <span>协议</span><span>状态</span><span>后台初筛延迟</span><span>来源</span><span>失败原因</span>
+            </div>
+            {nodes.map((node) => (
+              <div className="table-row node-grid" key={node.id}>
+                <span>{node.protocol}</span>
+                <span>{node.status}</span>
+                <span>{node.latency_ms ? `${node.latency_ms}ms` : "-"}</span>
+                <span>{node.source_type ?? "-"}</span>
+                <span className="truncate">{node.failure_reason ?? "-"}</span>
+              </div>
+            ))}
+            {!nodes.length && <p className="muted">暂无节点记录。</p>}
           </div>
         </section>
 

@@ -1,5 +1,93 @@
 # Handoff Log
 
+## 2026-05-23 v0.3.0
+
+### 本次开发时间
+
+- 2026-05-23 Asia/Shanghai
+
+### 本次开发目标
+
+- 完成基础连通性测试、基础延迟显示、测试失败剔除、失败原因记录、测试记录、候选节点池、节点状态管理、测试结果统计、延迟分布统计、按延迟排序、按协议/状态/延迟区间筛选。
+
+### 已完成功能
+
+- 添加节点 host/port 解析模块。
+- 添加出站 TCP 基础连通性测试。
+- 记录“后台初筛延迟”，不声称是真实使用延迟。
+- 测试通过节点状态更新为 `test_passed`。
+- 测试失败节点状态更新为 `test_failed`，记录失败原因，不进入候选池。
+- 新增 `node_test_results` 表保存节点级测试结果。
+- 新增测试任务 API：`GET /api/test-runs`、`POST /api/test-runs`。
+- 仪表盘显示测试任务、节点池预览和延迟分布。
+- 节点列表接口支持协议、状态、来源类型、延迟范围、是否已导出筛选。
+
+### 修改文件
+
+- 修改 `package.json`
+- 修改 `.env.example`
+- 修改 `apps/api/package.json`
+- 修改 `apps/api/src/config.ts`
+- 修改 `apps/api/src/routes.ts`
+- 修改 `apps/api/src/schema.ts`
+- 修改 `apps/web/package.json`
+- 修改 `apps/web/src/main.tsx`
+- 修改 `apps/web/src/styles.css`
+- 修改 `README.md`
+- 修改 `docs/ARCHITECTURE.md`
+- 修改 `docs/CHANGELOG.md`
+- 修改 `docs/DEVELOPMENT_LOG.md`
+- 修改 `docs/HANDOFF.md`
+- 修改 `docs/SECURITY.md`
+- 修改 `docs/TODO.md`
+- 新增 `apps/api/src/tester/nodeEndpoint.ts`
+- 新增 `apps/api/src/tester/connectivity.ts`
+- 新增 `apps/api/src/tester/testService.ts`
+
+### 删除文件
+
+- 无
+
+### 运行测试
+
+- 已执行：`node scripts/check-sensitive.mjs`，使用 Codex bundled Node 路径执行。
+- 已执行：UTF-8 内容扫描，确认 `apps/web/src/main.tsx`、`apps/api/src/routes.ts`、`README.md`、`docs/HANDOFF.md` 无替换字符和明显乱码片段。
+- 未执行：`npm install`，当前环境没有可用 `npm` 命令。
+- 未执行：`npm run typecheck`，当前环境没有可用 `npm` 命令。
+- 未执行：`npm run build`，当前环境没有可用 `npm` 命令。
+- 未执行：真实 TCP 测试，当前环境不是目标 Linux VPS，且缺少依赖安装。
+
+### 测试结果
+
+- 敏感文件检查通过：`Sensitive file check passed for 35 tracked or pending files.`
+- UTF-8 扫描通过：核心前端、后端路由和文档文件未发现替换字符或明显乱码片段。
+- 因本地环境缺少 `npm` 和 `docker`，依赖安装、类型检查、构建和真实 TCP 测试需在 VPS 或 Docker 环境继续验证。
+
+### 当前问题
+
+- 当前环境无法执行 npm/Docker 构建验证。
+- 当前环境无法解析 `github.com`，push 仍受阻。
+- 基础测试只是 TCP 初筛，不代表真实客户端可用性或真实使用延迟。
+
+### 下一步建议
+
+- v0.4.0 实现节点导出数量自定义、纯节点文件、加密 zip 节点包和批次管理。
+- 在 VPS 上完成一次端到端采集加测试验证。
+
+### 敏感信息检查
+
+- 本阶段不包含真实 `.env`、Token、数据库、节点包、运行日志。
+- 测试结果和节点数据只写入运行数据库，不提交到 GitHub。
+
+### Git commit 信息
+
+- 已本地提交：`5140755 feat: add v0.3.0 node testing`
+
+### 是否已 push 到 GitHub
+
+- 未 push 成功。执行 `git push -u origin codex/v0.3.0-testing` 失败：`Could not resolve host: github.com`。
+- 需要在网络/DNS 可访问 GitHub 的环境重试 push。
+
 ## 2026-05-23 v0.2.0
 
 ### 本次开发时间

@@ -24,7 +24,9 @@ const envSchema = z.object({
   HTTP_TIMEOUT_SECONDS: z.coerce.number().int().positive().default(12),
   COLLECT_RETRY_COUNT: z.coerce.number().int().min(0).max(3).default(2),
   COLLECT_MAX_BYTES: z.coerce.number().int().positive().default(1024 * 1024),
-  PUBLIC_SOURCE_SEEDS: z.string().default("")
+  PUBLIC_SOURCE_SEEDS: z.string().default(""),
+  TEST_CONNECT_TIMEOUT_SECONDS: z.coerce.number().int().positive().max(30).default(5),
+  TEST_BATCH_SIZE: z.coerce.number().int().positive().max(1000).default(100)
 });
 
 const parsed = envSchema.parse(process.env);
@@ -39,6 +41,7 @@ export const config = {
   LOGIN_LOCK_MS: parsed.LOGIN_LOCK_MINUTES * 60 * 1000,
   COLLECT_MIN_INTERVAL_MS: parsed.COLLECT_MIN_INTERVAL_MINUTES * 60 * 1000,
   HTTP_TIMEOUT_MS: parsed.HTTP_TIMEOUT_SECONDS * 1000,
+  TEST_CONNECT_TIMEOUT_MS: parsed.TEST_CONNECT_TIMEOUT_SECONDS * 1000,
   PUBLIC_SOURCE_SEEDS: parsed.PUBLIC_SOURCE_SEEDS.split(",")
     .map((value) => value.trim())
     .filter(Boolean),
