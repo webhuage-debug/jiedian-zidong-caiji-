@@ -23,6 +23,16 @@ function runLightweightMigrations() {
   if (!sourceColumns.some((column) => column.name === "content_hash")) {
     db.prepare("ALTER TABLE node_sources ADD COLUMN content_hash TEXT").run();
   }
+
+  const batchColumns = db.prepare("PRAGMA table_info(export_batches)").all() as Array<{ name: string }>;
+  if (batchColumns.length) {
+    if (!batchColumns.some((column) => column.name === "text_file_path")) {
+      db.prepare("ALTER TABLE export_batches ADD COLUMN text_file_path TEXT").run();
+    }
+    if (!batchColumns.some((column) => column.name === "export_options_json")) {
+      db.prepare("ALTER TABLE export_batches ADD COLUMN export_options_json TEXT").run();
+    }
+  }
 }
 
 function ensureInitialAdmin() {

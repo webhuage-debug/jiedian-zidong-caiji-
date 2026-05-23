@@ -13,6 +13,7 @@ RUN npm run build
 FROM node:20-bookworm-slim AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
+RUN apt-get update && apt-get install -y --no-install-recommends zip && rm -rf /var/lib/apt/lists/*
 COPY package.json package-lock.json* ./
 COPY apps/api/package.json apps/api/package.json
 COPY apps/web/package.json apps/web/package.json

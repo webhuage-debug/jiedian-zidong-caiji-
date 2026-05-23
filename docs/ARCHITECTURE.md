@@ -86,13 +86,21 @@ v0.3.0 已实现基础测试框架：
 
 ## 导出流程规划
 
-v0.4.0 实现：
+v0.4.0 已实现：
 
 1. 管理员设置批次名称、导出数量、延迟范围、排序方式、口令、有效期。
 2. 默认筛选测试通过、未导出、延迟最低的节点。
 3. 生成一行一个节点的纯文本文件，不附加备注。
 4. 生成密码加密 zip 包。
 5. 写入 `export_batches` 并标记节点所属批次。
+
+模块位置：
+
+- `apps/api/src/exporter/exportService.ts`：导出节点选择、批次创建、纯文本和 zip 包生成。
+- `apps/api/src/routes.ts`：导出批次 API。
+- `apps/web/src/main.tsx`：后台导出表单和批次列表。
+
+当前 zip 加密依赖系统 `zip` 命令，Docker runtime 镜像已安装 `zip`。在本地 Windows 环境如果没有 zip 命令，导出动作会失败；生产部署目标是 Linux VPS。
 
 ## 领取页流程规划
 

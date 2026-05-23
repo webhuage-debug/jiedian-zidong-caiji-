@@ -2,10 +2,11 @@ import type { FastifyInstance } from "fastify";
 import { requireAdmin } from "./auth.js";
 import { runCollection } from "./collector/collectionService.js";
 import { db } from "./db.js";
+import { createExportBatch, createExportSchema, listExportBatches } from "./exporter/exportService.js";
 import { runNodeTests } from "./tester/testService.js";
 
 export function registerApiRoutes(app: FastifyInstance) {
-  app.get("/health", async () => ({ ok: true, version: "0.3.0" }));
+  app.get("/health", async () => ({ ok: true, version: "0.4.0" }));
 
   app.get("/api/dashboard/summary", { preHandler: requireAdmin }, async () => {
     const nodeCounts = db
@@ -20,7 +21,7 @@ export function registerApiRoutes(app: FastifyInstance) {
     const recentTest = db.prepare("SELECT * FROM test_runs ORDER BY started_at DESC LIMIT 1").get() as Record<string, unknown> | undefined;
 
     return {
-      version: "0.3.0",
+      version: "0.4.0",
       systemStatus: "running",
       candidateNodes: countStatus(nodeCounts, "test_passed"),
       pendingNodes: countStatus(nodeCounts, "pending_test"),
@@ -129,6 +130,21 @@ export function registerApiRoutes(app: FastifyInstance) {
     } catch (error) {
       const message = error instanceof Error ? error.message : "test failed";
       return reply.code(500).send({ ok: false, message });
+    }
+  });
+
+  app.get("/api/export-batches", { preHandler: requireAdmin }, async () => {
+    return { items: listExportBatches() };
+  });
+
+  app.post("/api/export-batches", { preHandler: requireAdmin }, async (request, reply) => {
+    try {
+      const input = createExportSchema.parse(request.body);
+      const batch = await createExportBatch(input);
+      return { ok: true, batch };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "export failed";
+      return reply.code(400).send({ ok: false, message });
     }
   });
 

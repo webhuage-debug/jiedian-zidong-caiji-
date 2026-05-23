@@ -1,5 +1,97 @@
 # Handoff Log
 
+## 2026-05-23 v0.4.0
+
+### 本次开发时间
+
+- 2026-05-23 Asia/Shanghai
+
+### 本次开发目标
+
+- 完成自定义导出数量，默认导出 10 条，支持修改为 11 / 20 / 30 / 自定义数量。完成按延迟最低优先导出、按延迟范围导出、默认优先导出未导出节点、生成纯节点 txt 文件、生成 zip 节点包、手动设置口令、zip 密码加密、批次管理、草稿 / 已发布状态。
+
+### 已完成功能
+
+- 新增导出服务 `apps/api/src/exporter/exportService.ts`。
+- 支持导出数量默认 10 条，并可自定义。
+- 支持最大/最小延迟筛选。
+- 默认只导出 `test_passed` 节点。
+- 默认排除已导出节点。
+- 默认按后台初筛延迟从低到高导出。
+- 生成纯节点文件 `候选节点.txt`，每行一个节点，不添加备注。
+- 生成 `v2rayN导入说明.txt`、`使用说明.txt`、`免责声明.txt`、`反馈模板.txt`。
+- 使用管理员手动输入的口令创建 zip 包。
+- 口令使用 bcrypt 哈希保存。
+- 创建 `export_batches` 批次记录和 `batch_stats` 初始记录。
+- 导出后节点状态更新为 `exported`，记录 `exported_at` 和 `export_batch_id`。
+- 后台新增节点包导出表单和批次列表。
+- Docker runtime 镜像安装 `zip` 命令。
+
+### 修改文件
+
+- 修改 `package.json`
+- 修改 `Dockerfile`
+- 修改 `apps/api/package.json`
+- 修改 `apps/api/src/db.ts`
+- 修改 `apps/api/src/routes.ts`
+- 修改 `apps/api/src/schema.ts`
+- 修改 `apps/web/package.json`
+- 修改 `apps/web/src/main.tsx`
+- 修改 `apps/web/src/styles.css`
+- 修改 `README.md`
+- 修改 `docs/ARCHITECTURE.md`
+- 修改 `docs/CHANGELOG.md`
+- 修改 `docs/DEVELOPMENT_LOG.md`
+- 修改 `docs/HANDOFF.md`
+- 修改 `docs/SECURITY.md`
+- 修改 `docs/TODO.md`
+- 新增 `apps/api/src/exporter/exportService.ts`
+
+### 删除文件
+
+- 无
+
+### 运行测试
+
+- 已执行：`node scripts/check-sensitive.mjs`，使用 Codex bundled Node 路径执行。
+- 已执行：UTF-8 内容扫描，确认 `apps/web/src/main.tsx`、`apps/api/src/routes.ts`、`apps/api/src/exporter/exportService.ts`、`README.md`、`docs/HANDOFF.md` 无替换字符和明显乱码片段。
+- 未执行：`npm install`，当前环境没有可用 `npm` 命令。
+- 未执行：`npm run typecheck`，当前环境没有可用 `npm` 命令。
+- 未执行：`npm run build`，当前环境没有可用 `npm` 命令。
+- 未执行：真实 zip 导出，当前环境不是目标 Linux VPS，且缺少依赖安装。
+
+### 测试结果
+
+- 敏感文件检查通过：`Sensitive file check passed for 36 tracked or pending files.`
+- UTF-8 扫描通过：核心前端、后端导出服务、路由和文档文件未发现替换字符或明显乱码片段。
+- 因本地环境缺少 `npm` 和 `docker`，依赖安装、类型检查、构建和真实 zip 导出需在 VPS 或 Docker 环境继续验证。
+
+### 当前问题
+
+- 当前环境无法执行 npm/Docker 构建验证。
+- 当前环境无法解析 `github.com`，push 仍受阻。
+- zip 加密依赖系统 `zip` 命令，已在 Docker runtime 安装，但尚未在 Linux 环境验证。
+
+### 下一步建议
+
+- v0.5.0 实现公开领取页、口令验证、下载节点包、访问/口令/下载统计和反馈入口。
+- 在 VPS 上完成一次端到端采集、测试、导出验证。
+
+### 敏感信息检查
+
+- 本阶段不包含真实 `.env`、Token、数据库、节点包、运行日志。
+- 导出的节点包只会在运行时写入 `/data/exports`，不会提交 GitHub。
+- 口令不保存明文，只保存哈希。
+
+### Git commit 信息
+
+- 已本地提交：`c9ed031 feat: add v0.4.0 export batches`
+
+### 是否已 push 到 GitHub
+
+- 未 push 成功。执行 `git push -u origin codex/v0.4.0-export` 失败：`Could not resolve host: github.com`。
+- 需要在网络/DNS 可访问 GitHub 的环境重试 push。
+
 ## 2026-05-23 v0.3.0
 
 ### 本次开发时间

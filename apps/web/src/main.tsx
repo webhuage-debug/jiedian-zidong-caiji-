@@ -58,6 +58,17 @@ type NodeItem = {
   failure_reason?: string;
 };
 
+type ExportBatch = {
+  id: number;
+  batch_code: string;
+  name: string;
+  status: string;
+  node_count: number;
+  public_slug: string;
+  created_at: string;
+  expires_at?: string;
+};
+
 type SourceItem = {
   id: number;
   url: string;
@@ -153,24 +164,35 @@ function Dashboard({ user, onLogout }: { user: { username: string }; onLogout: (
   const [runs, setRuns] = React.useState<CollectionRun[]>([]);
   const [testRuns, setTestRuns] = React.useState<TestRun[]>([]);
   const [nodes, setNodes] = React.useState<NodeItem[]>([]);
+  const [batches, setBatches] = React.useState<ExportBatch[]>([]);
   const [videoMode, setVideoMode] = React.useState(false);
   const [collecting, setCollecting] = React.useState(false);
   const [testing, setTesting] = React.useState(false);
+  const [exporting, setExporting] = React.useState(false);
   const [notice, setNotice] = React.useState("");
+  const [exportForm, setExportForm] = React.useState({
+    name: "本期候选节点",
+    count: 10,
+    maxLatencyMs: "",
+    passphrase: "",
+    publish: true
+  });
 
   const refresh = React.useCallback(async () => {
-    const [summaryRes, sourcesRes, runsRes, testRunsRes, nodesRes] = await Promise.all([
+    const [summaryRes, sourcesRes, runsRes, testRunsRes, nodesRes, batchesRes] = await Promise.all([
       fetch("/api/dashboard/summary"),
       fetch("/api/sources"),
       fetch("/api/collection-runs"),
       fetch("/api/test-runs"),
-      fetch("/api/nodes?limit=8")
+      fetch("/api/nodes?limit=8"),
+      fetch("/api/export-batches")
     ]);
     setSummary(await summaryRes.json());
     setSources((await sourcesRes.json()).items ?? []);
     setRuns((await runsRes.json()).items ?? []);
     setTestRuns((await testRunsRes.json()).items ?? []);
     setNodes((await nodesRes.json()).items ?? []);
+    setBatches((await batchesRes.json()).items ?? []);
   }, []);
 
   React.useEffect(() => {
@@ -214,6 +236,34 @@ function Dashboard({ user, onLogout }: { user: { username: string }; onLogout: (
     await refresh();
   }
 
+  async function createExport(event: React.FormEvent) {
+    event.preventDefault();
+    setExporting(true);
+    setNotice("");
+    const res = await fetch("/api/export-batches", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: exportForm.name,
+        count: Number(exportForm.count),
+        maxLatencyMs: exportForm.maxLatencyMs ? Number(exportForm.maxLatencyMs) : undefined,
+        passphrase: exportForm.passphrase,
+        publish: exportForm.publish,
+        sort: "latency_asc",
+        includeExported: false
+      })
+    });
+    const data = await res.json();
+    setExporting(false);
+    if (!res.ok) {
+      setNotice(data.message ?? "导出失败");
+      return;
+    }
+    setNotice(`已生成批次 ${data.batch.batchCode}，导出节点 ${data.batch.nodeCount} 条。`);
+    setExportForm((value) => ({ ...value, passphrase: "" }));
+    await refresh();
+  }
+
   const displayUser = videoMode ? "已隐藏" : user.username;
 
   return (
@@ -228,7 +278,7 @@ function Dashboard({ user, onLogout }: { user: { username: string }; onLogout: (
         <header className="topbar">
           <div>
             <h1>首页仪表盘</h1>
-            <p>v0.3.0 测试版：采集、解析、去重、基础连通性测试和候选池。</p>
+            <p>v0.4.0 导出版：候选池、基础测试、自定义数量导出和加密节点包。</p>
           </div>
           <div className="top-actions">
             <button className={videoMode ? "icon active" : "icon"} onClick={() => setVideoMode((value) => !value)} title="公开视频模式">
@@ -274,6 +324,72 @@ function Dashboard({ user, onLogout }: { user: { username: string }; onLogout: (
               </div>
             ))}
             {!runs.length && <p className="muted">暂无采集任务记录。</p>}
+          </div>
+        </section>
+
+        <section className="panel">
+          <div className="panel-title">
+            <div>
+              <h2>节点包导出</h2>
+              <p className="muted compact">默认导出 10 条，可手动改成 11、20、30 或自定义数量。</p>
+            </div>
+          </div>
+          <form className="export-form" onSubmit={createExport}>
+            <label>
+              批次名称
+              <input value={exportForm.name} onChange={(event) => setExportForm((value) => ({ ...value, name: event.target.value }))} />
+            </label>
+            <label>
+              导出数量
+              <input
+                type="number"
+                min="1"
+                max="1000"
+                value={exportForm.count}
+                onChange={(event) => setExportForm((value) => ({ ...value, count: Number(event.target.value) }))}
+              />
+            </label>
+            <label>
+              最大延迟 ms
+              <input
+                placeholder="例如 300"
+                value={exportForm.maxLatencyMs}
+                onChange={(event) => setExportForm((value) => ({ ...value, maxLatencyMs: event.target.value }))}
+              />
+            </label>
+            <label>
+              本期口令
+              <input
+                type="password"
+                value={exportForm.passphrase}
+                onChange={(event) => setExportForm((value) => ({ ...value, passphrase: event.target.value }))}
+                required
+              />
+            </label>
+            <label className="check-row">
+              <input
+                type="checkbox"
+                checked={exportForm.publish}
+                onChange={(event) => setExportForm((value) => ({ ...value, publish: event.target.checked }))}
+              />
+              发布领取页
+            </label>
+            <button className="primary small" disabled={exporting}>{exporting ? "生成中..." : "生成节点包"}</button>
+          </form>
+          <div className="table spaced">
+            <div className="table-head batch-grid">
+              <span>批次</span><span>名称</span><span>状态</span><span>数量</span><span>领取页</span>
+            </div>
+            {batches.slice(0, 6).map((batch) => (
+              <div className="table-row batch-grid" key={batch.id}>
+                <span>{batch.batch_code}</span>
+                <span className="truncate">{batch.name}</span>
+                <span>{batch.status}</span>
+                <span>{batch.node_count}</span>
+                <span className="truncate">/p/{batch.public_slug}</span>
+              </div>
+            ))}
+            {!batches.length && <p className="muted">暂无导出批次。</p>}
           </div>
         </section>
 

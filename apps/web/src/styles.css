@@ -341,6 +341,34 @@ input {
   grid-template-columns: 80px 120px 130px 90px minmax(0, 1fr);
 }
 
+.batch-grid {
+  grid-template-columns: 150px minmax(0, 1fr) 90px 70px minmax(0, 1fr);
+}
+
+.export-form {
+  display: grid;
+  grid-template-columns: minmax(160px, 1.5fr) 110px 130px minmax(150px, 1fr) 130px auto;
+  gap: 12px;
+  align-items: end;
+  margin-bottom: 16px;
+}
+
+.check-row {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.check-row input {
+  width: 18px;
+  min-height: 18px;
+}
+
+.spaced {
+  margin-top: 12px;
+}
+
 .truncate {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -371,7 +399,9 @@ input {
 
   .run-grid,
   .source-grid,
-  .node-grid {
+  .node-grid,
+  .batch-grid,
+  .export-form {
     grid-template-columns: 1fr 1fr;
   }
 }
@@ -382,6 +412,10 @@ input {
   }
 
   .bar-row {
+    grid-template-columns: 1fr;
+  }
+
+  .export-form {
     grid-template-columns: 1fr;
   }
 }
