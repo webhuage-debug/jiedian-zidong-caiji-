@@ -16,19 +16,15 @@ type Summary = {
   failedNodes: number;
   collectedNodes: number;
   publishedBatches: number;
-  recentCollection?: CollectionRun | null;
   latencyDistribution: Array<{ label: string; count: number }>;
 };
 
 type CollectionRun = {
   id: number;
   status: string;
-  started_at: string;
-  finished_at?: string;
   discovered_sources: number;
   fetched_sources: number;
   raw_nodes: number;
-  deduped_nodes: number;
   inserted_nodes: number;
   error_count: number;
 };
@@ -36,23 +32,16 @@ type CollectionRun = {
 type TestRun = {
   id: number;
   status: string;
-  started_at: string;
-  finished_at?: string;
   tested_nodes: number;
   passed_nodes: number;
   failed_nodes: number;
-  removed_nodes: number;
-  min_latency_ms?: number;
   avg_latency_ms?: number;
-  max_latency_ms?: number;
 };
 
 type NodeItem = {
   id: number;
   protocol: string;
   source_type?: string;
-  collected_at: string;
-  last_tested_at?: string;
   latency_ms?: number;
   status: string;
   failure_reason?: string;
@@ -65,8 +54,6 @@ type ExportBatch = {
   status: string;
   node_count: number;
   public_slug: string;
-  created_at: string;
-  expires_at?: string;
 };
 
 type SourceItem = {
@@ -76,12 +63,24 @@ type SourceItem = {
   status: string;
   success_count: number;
   failure_count: number;
-  last_checked_at?: string;
-  next_allowed_at?: string;
-  last_error?: string;
+};
+
+type PublicBatch = {
+  batchCode: string;
+  name: string;
+  description: string;
+  nodeCount: number;
+  expiresAt?: string | null;
+  createdAt: string;
 };
 
 function App() {
+  const publicMatch = window.location.pathname.match(/^\/p\/([^/]+)/);
+  if (publicMatch) return <PublicClaimPage slug={publicMatch[1]} />;
+  return <AdminApp />;
+}
+
+function AdminApp() {
   const [auth, setAuth] = React.useState<AuthStatus | null>(null);
 
   React.useEffect(() => {
@@ -278,7 +277,7 @@ function Dashboard({ user, onLogout }: { user: { username: string }; onLogout: (
         <header className="topbar">
           <div>
             <h1>首页仪表盘</h1>
-            <p>v0.4.0 导出版：候选池、基础测试、自定义数量导出和加密节点包。</p>
+            <p>v0.5.0 领取页版：采集、测试、导出、公开领取和反馈统计。</p>
           </div>
           <div className="top-actions">
             <button className={videoMode ? "icon active" : "icon"} onClick={() => setVideoMode((value) => !value)} title="公开视频模式">
@@ -297,35 +296,7 @@ function Dashboard({ user, onLogout }: { user: { username: string }; onLogout: (
           <Metric label="失败/剔除" value={summary?.failedNodes ?? 0} />
         </section>
 
-        <section className="panel">
-          <div className="panel-title">
-            <div>
-              <h2>采集任务</h2>
-              <p className="muted compact">采集任务已限制频率和并发，只抓取公开 URL。</p>
-            </div>
-            <button className="primary small" onClick={runCollector} disabled={collecting}>
-              <Play size={16} />
-              {collecting ? "采集中..." : "开始采集"}
-            </button>
-          </div>
-          {notice && <div className="notice">{notice}</div>}
-          <div className="table">
-            <div className="table-head run-grid">
-              <span>任务</span><span>状态</span><span>来源</span><span>原始</span><span>新增</span><span>错误</span>
-            </div>
-            {runs.slice(0, 6).map((run) => (
-              <div className="table-row run-grid" key={run.id}>
-                <span>#{run.id}</span>
-                <span>{run.status}</span>
-                <span>{run.fetched_sources}/{run.discovered_sources}</span>
-                <span>{run.raw_nodes}</span>
-                <span>{run.inserted_nodes}</span>
-                <span>{run.error_count}</span>
-              </div>
-            ))}
-            {!runs.length && <p className="muted">暂无采集任务记录。</p>}
-          </div>
-        </section>
+        {notice && <div className="notice">{notice}</div>}
 
         <section className="panel">
           <div className="panel-title">
@@ -341,56 +312,37 @@ function Dashboard({ user, onLogout }: { user: { username: string }; onLogout: (
             </label>
             <label>
               导出数量
-              <input
-                type="number"
-                min="1"
-                max="1000"
-                value={exportForm.count}
-                onChange={(event) => setExportForm((value) => ({ ...value, count: Number(event.target.value) }))}
-              />
+              <input type="number" min="1" max="1000" value={exportForm.count} onChange={(event) => setExportForm((value) => ({ ...value, count: Number(event.target.value) }))} />
             </label>
             <label>
               最大延迟 ms
-              <input
-                placeholder="例如 300"
-                value={exportForm.maxLatencyMs}
-                onChange={(event) => setExportForm((value) => ({ ...value, maxLatencyMs: event.target.value }))}
-              />
+              <input placeholder="例如 300" value={exportForm.maxLatencyMs} onChange={(event) => setExportForm((value) => ({ ...value, maxLatencyMs: event.target.value }))} />
             </label>
             <label>
               本期口令
-              <input
-                type="password"
-                value={exportForm.passphrase}
-                onChange={(event) => setExportForm((value) => ({ ...value, passphrase: event.target.value }))}
-                required
-              />
+              <input type="password" value={exportForm.passphrase} onChange={(event) => setExportForm((value) => ({ ...value, passphrase: event.target.value }))} required />
             </label>
             <label className="check-row">
-              <input
-                type="checkbox"
-                checked={exportForm.publish}
-                onChange={(event) => setExportForm((value) => ({ ...value, publish: event.target.checked }))}
-              />
+              <input type="checkbox" checked={exportForm.publish} onChange={(event) => setExportForm((value) => ({ ...value, publish: event.target.checked }))} />
               发布领取页
             </label>
             <button className="primary small" disabled={exporting}>{exporting ? "生成中..." : "生成节点包"}</button>
           </form>
-          <div className="table spaced">
-            <div className="table-head batch-grid">
-              <span>批次</span><span>名称</span><span>状态</span><span>数量</span><span>领取页</span>
+          <BatchTable batches={batches} />
+        </section>
+
+        <section className="panel">
+          <div className="panel-title">
+            <div>
+              <h2>采集任务</h2>
+              <p className="muted compact">采集任务已限制频率和并发，只抓取公开 URL。</p>
             </div>
-            {batches.slice(0, 6).map((batch) => (
-              <div className="table-row batch-grid" key={batch.id}>
-                <span>{batch.batch_code}</span>
-                <span className="truncate">{batch.name}</span>
-                <span>{batch.status}</span>
-                <span>{batch.node_count}</span>
-                <span className="truncate">/p/{batch.public_slug}</span>
-              </div>
-            ))}
-            {!batches.length && <p className="muted">暂无导出批次。</p>}
+            <button className="primary small" onClick={runCollector} disabled={collecting}>
+              <Play size={16} />
+              {collecting ? "采集中..." : "开始采集"}
+            </button>
           </div>
+          <RunTable runs={runs} />
         </section>
 
         <section className="panel">
@@ -404,85 +356,209 @@ function Dashboard({ user, onLogout }: { user: { username: string }; onLogout: (
               {testing ? "测试中..." : "开始测试"}
             </button>
           </div>
-          <div className="table">
-            <div className="table-head run-grid">
-              <span>任务</span><span>状态</span><span>测试</span><span>通过</span><span>失败</span><span>均值</span>
-            </div>
-            {testRuns.slice(0, 6).map((run) => (
-              <div className="table-row run-grid" key={run.id}>
-                <span>#{run.id}</span>
-                <span>{run.status}</span>
-                <span>{run.tested_nodes}</span>
-                <span>{run.passed_nodes}</span>
-                <span>{run.failed_nodes}</span>
-                <span>{run.avg_latency_ms ? `${run.avg_latency_ms}ms` : "-"}</span>
-              </div>
-            ))}
-            {!testRuns.length && <p className="muted">暂无测试任务记录。</p>}
-          </div>
+          <TestRunTable runs={testRuns} />
         </section>
 
-        <section className="panel">
-          <div className="panel-title">
-            <h2>节点池预览</h2>
-            <Activity size={18} />
-          </div>
-          <div className="table">
-            <div className="table-head node-grid">
-              <span>协议</span><span>状态</span><span>后台初筛延迟</span><span>来源</span><span>失败原因</span>
-            </div>
-            {nodes.map((node) => (
-              <div className="table-row node-grid" key={node.id}>
-                <span>{node.protocol}</span>
-                <span>{node.status}</span>
-                <span>{node.latency_ms ? `${node.latency_ms}ms` : "-"}</span>
-                <span>{node.source_type ?? "-"}</span>
-                <span className="truncate">{node.failure_reason ?? "-"}</span>
-              </div>
-            ))}
-            {!nodes.length && <p className="muted">暂无节点记录。</p>}
-          </div>
-        </section>
-
-        <section className="panel">
-          <div className="panel-title">
-            <h2>来源缓存</h2>
-            <GitBranch size={18} />
-          </div>
-          <div className="table">
-            <div className="table-head source-grid">
-              <span>类型</span><span>状态</span><span>成功</span><span>失败</span><span>来源 URL</span>
-            </div>
-            {sources.slice(0, 8).map((source) => (
-              <div className="table-row source-grid" key={source.id}>
-                <span>{source.source_type}</span>
-                <span>{source.status}</span>
-                <span>{source.success_count}</span>
-                <span>{source.failure_count}</span>
-                <span className="truncate">{videoMode ? maskUrl(source.url) : source.url}</span>
-              </div>
-            ))}
-            {!sources.length && <p className="muted">暂无来源缓存。</p>}
-          </div>
-        </section>
-
-        <section className="panel">
-          <div className="panel-title">
-            <h2>后台初筛延迟分布</h2>
-            <Database size={18} />
-          </div>
-          <div className="distribution">
-            {(summary?.latencyDistribution ?? []).map((item) => (
-              <div key={item.label} className="bar-row">
-                <span>{item.label}</span>
-                <div className="bar"><i style={{ width: `${Math.min(item.count * 5, 100)}%` }} /></div>
-                <strong>{item.count}</strong>
-              </div>
-            ))}
-          </div>
-        </section>
+        <NodePreview nodes={nodes} />
+        <SourceCache sources={sources} videoMode={videoMode} />
+        <LatencyDistribution summary={summary} />
       </section>
     </main>
+  );
+}
+
+function PublicClaimPage({ slug }: { slug: string }) {
+  const [batch, setBatch] = React.useState<PublicBatch | null>(null);
+  const [found, setFound] = React.useState(true);
+  const [unlocked, setUnlocked] = React.useState(false);
+  const [passphrase, setPassphrase] = React.useState("");
+  const [message, setMessage] = React.useState("");
+  const [feedback, setFeedback] = React.useState({
+    region: "",
+    carrier: "",
+    device: "",
+    clientApp: "",
+    isUsable: true,
+    note: ""
+  });
+
+  React.useEffect(() => {
+    fetch(`/api/public/batches/${slug}${window.location.search}`)
+      .then((res) => res.json())
+      .then((data) => {
+        setFound(data.found);
+        setBatch(data.batch ?? null);
+        setUnlocked(Boolean(data.unlocked));
+      })
+      .catch(() => setFound(false));
+  }, [slug]);
+
+  async function verify(event: React.FormEvent) {
+    event.preventDefault();
+    setMessage("");
+    const res = await fetch(`/api/public/batches/${slug}/verify${window.location.search}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ passphrase })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      setMessage(data.message ?? "口令验证失败");
+      return;
+    }
+    setUnlocked(true);
+    setMessage("口令正确，可以下载节点包。");
+  }
+
+  async function submitFeedback(event: React.FormEvent) {
+    event.preventDefault();
+    const res = await fetch(`/api/public/batches/${slug}/feedback${window.location.search}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(feedback)
+    });
+    setMessage(res.ok ? "反馈已提交，谢谢。" : "反馈提交失败。");
+  }
+
+  if (!found) {
+    return <main className="public-shell"><section className="public-panel"><h1>领取页不可用</h1><p>批次不存在、未发布或已过期。</p></section></main>;
+  }
+
+  return (
+    <main className="public-shell">
+      <section className="public-panel">
+        <h1>{batch?.name ?? "节点包领取"}</h1>
+        <p className="muted">批次编号：{batch?.batchCode ?? "-"}</p>
+        <p>{batch?.description || "输入正确口令后即可下载加密节点包。领取页不会直接展示完整节点。"}</p>
+        <div className="public-meta">
+          <span>节点数量：{batch?.nodeCount ?? 0}</span>
+          <span>有效期：{batch?.expiresAt ? new Date(batch.expiresAt).toLocaleString() : "未设置"}</span>
+        </div>
+
+        <form className="login-form" onSubmit={verify}>
+          <label>
+            领取口令
+            <input type="password" value={passphrase} onChange={(event) => setPassphrase(event.target.value)} />
+          </label>
+          <button className="primary">验证口令</button>
+        </form>
+
+        {unlocked && (
+          <a className="download-button" href={`/api/public/batches/${slug}/download${window.location.search}`}>
+            下载加密节点包
+          </a>
+        )}
+
+        {message && <div className="notice">{message}</div>}
+
+        <form className="feedback-form" onSubmit={submitFeedback}>
+          <h2>简单反馈</h2>
+          <input placeholder="地区" value={feedback.region} onChange={(event) => setFeedback((value) => ({ ...value, region: event.target.value }))} />
+          <input placeholder="运营商" value={feedback.carrier} onChange={(event) => setFeedback((value) => ({ ...value, carrier: event.target.value }))} />
+          <input placeholder="设备" value={feedback.device} onChange={(event) => setFeedback((value) => ({ ...value, device: event.target.value }))} />
+          <input placeholder="使用软件" value={feedback.clientApp} onChange={(event) => setFeedback((value) => ({ ...value, clientApp: event.target.value }))} />
+          <label className="check-row">
+            <input type="checkbox" checked={feedback.isUsable} onChange={(event) => setFeedback((value) => ({ ...value, isUsable: event.target.checked }))} />
+            本批次可用
+          </label>
+          <textarea placeholder="备注" value={feedback.note} onChange={(event) => setFeedback((value) => ({ ...value, note: event.target.value }))} />
+          <button className="primary small">提交反馈</button>
+        </form>
+      </section>
+    </main>
+  );
+}
+
+function RunTable({ runs }: { runs: CollectionRun[] }) {
+  return (
+    <div className="table">
+      <div className="table-head run-grid"><span>任务</span><span>状态</span><span>来源</span><span>原始</span><span>新增</span><span>错误</span></div>
+      {runs.slice(0, 6).map((run) => (
+        <div className="table-row run-grid" key={run.id}>
+          <span>#{run.id}</span><span>{run.status}</span><span>{run.fetched_sources}/{run.discovered_sources}</span><span>{run.raw_nodes}</span><span>{run.inserted_nodes}</span><span>{run.error_count}</span>
+        </div>
+      ))}
+      {!runs.length && <p className="muted">暂无采集任务记录。</p>}
+    </div>
+  );
+}
+
+function TestRunTable({ runs }: { runs: TestRun[] }) {
+  return (
+    <div className="table">
+      <div className="table-head run-grid"><span>任务</span><span>状态</span><span>测试</span><span>通过</span><span>失败</span><span>均值</span></div>
+      {runs.slice(0, 6).map((run) => (
+        <div className="table-row run-grid" key={run.id}>
+          <span>#{run.id}</span><span>{run.status}</span><span>{run.tested_nodes}</span><span>{run.passed_nodes}</span><span>{run.failed_nodes}</span><span>{run.avg_latency_ms ? `${run.avg_latency_ms}ms` : "-"}</span>
+        </div>
+      ))}
+      {!runs.length && <p className="muted">暂无测试任务记录。</p>}
+    </div>
+  );
+}
+
+function BatchTable({ batches }: { batches: ExportBatch[] }) {
+  return (
+    <div className="table spaced">
+      <div className="table-head batch-grid"><span>批次</span><span>名称</span><span>状态</span><span>数量</span><span>领取页</span></div>
+      {batches.slice(0, 6).map((batch) => (
+        <div className="table-row batch-grid" key={batch.id}>
+          <span>{batch.batch_code}</span><span className="truncate">{batch.name}</span><span>{batch.status}</span><span>{batch.node_count}</span><span className="truncate">/p/{batch.public_slug}</span>
+        </div>
+      ))}
+      {!batches.length && <p className="muted">暂无导出批次。</p>}
+    </div>
+  );
+}
+
+function NodePreview({ nodes }: { nodes: NodeItem[] }) {
+  return (
+    <section className="panel">
+      <div className="panel-title"><h2>节点池预览</h2><Activity size={18} /></div>
+      <div className="table">
+        <div className="table-head node-grid"><span>协议</span><span>状态</span><span>后台初筛延迟</span><span>来源</span><span>失败原因</span></div>
+        {nodes.map((node) => (
+          <div className="table-row node-grid" key={node.id}>
+            <span>{node.protocol}</span><span>{node.status}</span><span>{node.latency_ms ? `${node.latency_ms}ms` : "-"}</span><span>{node.source_type ?? "-"}</span><span className="truncate">{node.failure_reason ?? "-"}</span>
+          </div>
+        ))}
+        {!nodes.length && <p className="muted">暂无节点记录。</p>}
+      </div>
+    </section>
+  );
+}
+
+function SourceCache({ sources, videoMode }: { sources: SourceItem[]; videoMode: boolean }) {
+  return (
+    <section className="panel">
+      <div className="panel-title"><h2>来源缓存</h2><GitBranch size={18} /></div>
+      <div className="table">
+        <div className="table-head source-grid"><span>类型</span><span>状态</span><span>成功</span><span>失败</span><span>来源 URL</span></div>
+        {sources.slice(0, 8).map((source) => (
+          <div className="table-row source-grid" key={source.id}>
+            <span>{source.source_type}</span><span>{source.status}</span><span>{source.success_count}</span><span>{source.failure_count}</span><span className="truncate">{videoMode ? maskUrl(source.url) : source.url}</span>
+          </div>
+        ))}
+        {!sources.length && <p className="muted">暂无来源缓存。</p>}
+      </div>
+    </section>
+  );
+}
+
+function LatencyDistribution({ summary }: { summary: Summary | null }) {
+  return (
+    <section className="panel">
+      <div className="panel-title"><h2>后台初筛延迟分布</h2><Database size={18} /></div>
+      <div className="distribution">
+        {(summary?.latencyDistribution ?? []).map((item) => (
+          <div key={item.label} className="bar-row">
+            <span>{item.label}</span>
+            <div className="bar"><i style={{ width: `${Math.min(item.count * 5, 100)}%` }} /></div>
+            <strong>{item.count}</strong>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 

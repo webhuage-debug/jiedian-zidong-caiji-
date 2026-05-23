@@ -1,5 +1,86 @@
 # Handoff Log
 
+## 2026-05-23 v0.5.0
+
+### 本次开发时间
+
+- 2026-05-23 Asia/Shanghai
+
+### 本次开发目标
+
+- 完成公开领取页、批次说明展示、口令输入、口令验证、正确口令后下载节点包、下载次数统计、访问次数统计、口令正确 / 错误次数统计、来源平台参数统计、简单反馈入口。
+
+### 已完成功能
+
+- 新增公开领取页前端 `/p/:slug`。
+- 新增公开批次信息 API：`GET /api/public/batches/:slug`。
+- 新增口令验证 API：`POST /api/public/batches/:slug/verify`。
+- 新增节点包下载 API：`GET /api/public/batches/:slug/download`。
+- 新增反馈 API：`POST /api/public/batches/:slug/feedback`。
+- 口令正确后设置短时 HttpOnly 解锁 Cookie。
+- 下载 API 必须先通过口令验证。
+- 记录访问、口令尝试、口令正确、口令错误、解锁、下载、反馈统计。
+- 支持 `?from=...` 来源平台参数记录。
+- IP 使用 HMAC 哈希记录，不保存明文 IP。
+- 公开领取页不直接展示完整节点。
+
+### 修改文件
+
+- 修改 `package.json`
+- 修改 `apps/api/package.json`
+- 修改 `apps/api/src/routes.ts`
+- 修改 `apps/api/src/server.ts`
+- 修改 `apps/web/package.json`
+- 修改 `apps/web/src/main.tsx`
+- 修改 `apps/web/src/styles.css`
+- 新增 `apps/api/src/publicClaim.ts`
+- 修改 `docs/CHANGELOG.md`
+- 修改 `docs/DEVELOPMENT_LOG.md`
+- 修改 `docs/HANDOFF.md`
+
+### 删除文件
+
+- 无
+
+### 运行测试
+
+- 已执行：`node scripts/check-sensitive.mjs`，使用 Codex bundled Node 路径执行。
+- 已执行：UTF-8 内容扫描，确认 `apps/web/src/main.tsx`、`apps/api/src/publicClaim.ts`、`apps/api/src/routes.ts`、`README.md`、`docs/HANDOFF.md`、`docs/ARCHITECTURE.md`、`docs/SECURITY.md` 无替换字符和明显乱码片段。
+- 未执行：`npm install`，当前环境没有可用 `npm` 命令。
+- 未执行：`npm run typecheck`，当前环境没有可用 `npm` 命令。
+- 未执行：`npm run build`，当前环境没有可用 `npm` 命令。
+- 未执行：公开领取页下载端到端验证，当前环境不是目标 Linux VPS，且缺少依赖安装。
+
+### 测试结果
+
+- 敏感文件检查通过：`Sensitive file check passed for 37 tracked or pending files.`
+- UTF-8 扫描通过：核心前端、公开领取 API、路由和文档文件未发现替换字符或明显乱码片段。
+- 因本地环境缺少 `npm` 和 `docker`，依赖安装、类型检查、构建和公开领取页端到端验证需在 VPS 或 Docker 环境继续验证。
+
+### 当前问题
+
+- 当前环境无法执行 npm/Docker 构建验证。
+- 当前环境无法解析 `github.com`。
+- 按用户要求，本阶段不主动 push GitHub。
+
+### 下一步建议
+
+- v0.6.0 实现完整公开视频模式、日志脱敏、下载限速、采集限速完善和敏感信息隐藏。
+- 在 VPS 上完成一次公开领取页口令验证和下载测试。
+
+### 敏感信息检查
+
+- 本阶段不包含真实 `.env`、Token、数据库、节点包、运行日志。
+- 公开领取页不展示完整节点。
+
+### Git commit 信息
+
+- 本阶段提交信息：`feat: add v0.5.0 public claim page`
+
+### 是否已 push 到 GitHub
+
+- 未 push。用户明确要求：本地上传 GitHub 必须确认后或有明确指令后执行。本阶段只做本地 commit，等待用户后续统一推送指令。
+
 ## 2026-05-23 v0.4.0
 
 ### 本次开发时间

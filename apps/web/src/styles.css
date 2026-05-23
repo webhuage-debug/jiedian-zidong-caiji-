@@ -13,7 +13,8 @@ body {
 }
 
 button,
-input {
+input,
+textarea {
   font: inherit;
 }
 
@@ -38,6 +39,69 @@ input {
   border-radius: 8px;
   padding: 28px;
   box-shadow: 0 24px 70px rgba(3, 24, 31, 0.26);
+}
+
+.public-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background:
+    linear-gradient(120deg, rgba(22, 77, 78, 0.88), rgba(58, 83, 72, 0.84)),
+    url("https://images.unsplash.com/photo-1544197150-b99a580bb7a8?auto=format&fit=crop&w=1800&q=80") center/cover;
+}
+
+.public-panel {
+  width: min(720px, 100%);
+  background: rgba(255, 255, 255, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  border-radius: 8px;
+  padding: 28px;
+  box-shadow: 0 24px 70px rgba(3, 24, 31, 0.26);
+}
+
+.public-panel h1 {
+  margin: 0 0 8px;
+  font-size: 28px;
+}
+
+.public-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 18px 0;
+}
+
+.public-meta span {
+  border: 1px solid #d4e0e2;
+  border-radius: 6px;
+  background: #f6fafb;
+  padding: 8px 10px;
+}
+
+.download-button {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  background: #0f6d75;
+  color: #fff;
+  padding: 0 16px;
+  margin: 16px 0;
+  font-weight: 750;
+  text-decoration: none;
+}
+
+.feedback-form {
+  display: grid;
+  gap: 12px;
+  margin-top: 22px;
+}
+
+.feedback-form h2 {
+  margin: 0;
+  font-size: 18px;
 }
 
 .brand-row {
@@ -78,6 +142,15 @@ input {
   min-height: 44px;
   padding: 0 12px;
   background: #fff;
+}
+
+textarea {
+  width: 100%;
+  min-height: 96px;
+  border: 1px solid #c9d5d9;
+  border-radius: 6px;
+  padding: 10px 12px;
+  resize: vertical;
 }
 
 .password-box {

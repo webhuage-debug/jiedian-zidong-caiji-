@@ -7,6 +7,7 @@ import { config } from "./config.js";
 import { initializeDatabase } from "./db.js";
 import { registerAuthRoutes } from "./auth.js";
 import { registerApiRoutes } from "./routes.js";
+import { registerPublicClaimRoutes } from "./publicClaim.js";
 
 initializeDatabase();
 
@@ -22,6 +23,7 @@ await app.register(rateLimit, {
 
 registerAuthRoutes(app);
 registerApiRoutes(app);
+registerPublicClaimRoutes(app);
 
 const webDist = path.resolve(process.cwd(), "apps/web/dist");
 await app.register(fastifyStatic, {

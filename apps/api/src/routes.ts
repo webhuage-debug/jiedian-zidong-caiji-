@@ -6,7 +6,7 @@ import { createExportBatch, createExportSchema, listExportBatches } from "./expo
 import { runNodeTests } from "./tester/testService.js";
 
 export function registerApiRoutes(app: FastifyInstance) {
-  app.get("/health", async () => ({ ok: true, version: "0.4.0" }));
+  app.get("/health", async () => ({ ok: true, version: "0.5.0" }));
 
   app.get("/api/dashboard/summary", { preHandler: requireAdmin }, async () => {
     const nodeCounts = db
@@ -21,7 +21,7 @@ export function registerApiRoutes(app: FastifyInstance) {
     const recentTest = db.prepare("SELECT * FROM test_runs ORDER BY started_at DESC LIMIT 1").get() as Record<string, unknown> | undefined;
 
     return {
-      version: "0.4.0",
+      version: "0.5.0",
       systemStatus: "running",
       candidateNodes: countStatus(nodeCounts, "test_passed"),
       pendingNodes: countStatus(nodeCounts, "pending_test"),
