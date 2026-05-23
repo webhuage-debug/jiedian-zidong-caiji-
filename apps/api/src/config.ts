@@ -28,6 +28,7 @@ const envSchema = z.object({
   PUBLIC_SOURCE_SEEDS: z.string().default(""),
   TEST_CONNECT_TIMEOUT_SECONDS: z.coerce.number().int().positive().max(30).default(5),
   TEST_BATCH_SIZE: z.coerce.number().int().positive().max(1000).default(100),
+  TEST_MAX_CONCURRENCY: z.coerce.number().int().positive().max(100).default(20),
   DOWNLOAD_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().positive().max(120).default(6)
 });
 

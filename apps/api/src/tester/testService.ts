@@ -51,12 +51,12 @@ async function runNodeTestsInternal(options?: { limit?: number; includeFailed?: 
   let passedNodes = 0;
   let failedNodes = 0;
 
-  for (const node of nodes) {
+  await runWithConcurrency(nodes, config.TEST_MAX_CONCURRENCY, async (node) => {
     const endpoint = parseNodeEndpoint(node.content, node.protocol);
     if (!endpoint) {
       failedNodes += 1;
       recordNodeResult(runId, node.id, "test_failed", null, "parse_failed");
-      continue;
+      return;
     }
 
     const result = await testTcpConnection(endpoint.host, endpoint.port);
@@ -68,7 +68,7 @@ async function runNodeTestsInternal(options?: { limit?: number; includeFailed?: 
       failedNodes += 1;
       recordNodeResult(runId, node.id, "test_failed", null, result.reason);
     }
-  }
+  });
 
   const summary: TestSummary = {
     runId,
@@ -100,6 +100,18 @@ async function runNodeTestsInternal(options?: { limit?: number; includeFailed?: 
   );
 
   return summary;
+}
+
+async function runWithConcurrency<T>(items: T[], concurrency: number, worker: (item: T) => Promise<void>) {
+  const queue = [...items];
+  const workers = Array.from({ length: Math.min(concurrency, queue.length) }, async () => {
+    while (queue.length) {
+      const item = queue.shift();
+      if (!item) return;
+      await worker(item);
+    }
+  });
+  await Promise.all(workers);
 }
 
 function recordNodeResult(testRunId: number, nodeId: number, status: "test_passed" | "test_failed", latencyMs: number | null, failureReason: string | null) {

@@ -120,6 +120,7 @@ npm run dev
 - `HTTP_TIMEOUT_SECONDS`：单次请求超时
 - `TEST_CONNECT_TIMEOUT_SECONDS`：基础测试 TCP 连接超时
 - `TEST_BATCH_SIZE`：单次默认测试节点数量
+- `TEST_MAX_CONCURRENCY`：基础测试并发数量，默认 20
 - `DOWNLOAD_RATE_LIMIT_PER_MINUTE`：公开领取页单批次每 IP 哈希每分钟下载次数限制
 
 真实 `.env` 禁止提交到 GitHub。

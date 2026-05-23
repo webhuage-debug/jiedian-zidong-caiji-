@@ -221,7 +221,7 @@ function Dashboard({ user, onLogout }: { user: { username: string }; onLogout: (
 
   async function runTester() {
     setTesting(true);
-    setNotice("");
+    setNotice("基础测试已开始，正在并发测试前 100 条待测试节点，请稍候...");
     const res = await fetch("/api/test-runs", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -239,8 +239,12 @@ function Dashboard({ user, onLogout }: { user: { username: string }; onLogout: (
 
   async function createExport(event: React.FormEvent) {
     event.preventDefault();
+    if (!exportForm.passphrase.trim()) {
+      setNotice("请先填写本期口令，口令会同时用于领取页验证和 zip 解压。");
+      return;
+    }
     setExporting(true);
-    setNotice("");
+    setNotice("正在生成节点包...");
     const res = await fetch("/api/export-batches", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
