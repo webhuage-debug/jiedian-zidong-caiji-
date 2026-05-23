@@ -8,7 +8,7 @@ import { isPublicVideoModeEnabled, setSetting } from "./settings.js";
 import { runNodeTests } from "./tester/testService.js";
 
 export function registerApiRoutes(app: FastifyInstance) {
-  app.get("/health", async () => ({ ok: true, version: "0.6.0" }));
+  app.get("/health", async () => ({ ok: true, version: "1.0.0" }));
 
   app.get("/api/dashboard/summary", { preHandler: requireAdmin }, async () => {
     const nodeCounts = db
@@ -23,7 +23,7 @@ export function registerApiRoutes(app: FastifyInstance) {
     const recentTest = db.prepare("SELECT * FROM test_runs ORDER BY started_at DESC LIMIT 1").get() as Record<string, unknown> | undefined;
 
     return {
-      version: "0.6.0",
+      version: "1.0.0",
       systemStatus: "running",
       candidateNodes: countStatus(nodeCounts, "test_passed"),
       pendingNodes: countStatus(nodeCounts, "pending_test"),
@@ -182,6 +182,40 @@ export function registerApiRoutes(app: FastifyInstance) {
         ...log,
         message: videoMode ? redactSensitiveText(log.message) : log.message
       }))
+    };
+  });
+
+  app.get("/api/stats/batches", { preHandler: requireAdmin }, async () => {
+    return {
+      items: db
+        .prepare(
+          `SELECT export_batches.id, export_batches.batch_code, export_batches.name, export_batches.status,
+                  export_batches.node_count, export_batches.public_slug,
+                  batch_stats.view_count, batch_stats.passphrase_attempt_count,
+                  batch_stats.passphrase_correct_count, batch_stats.passphrase_wrong_count,
+                  batch_stats.unlock_count, batch_stats.download_count, batch_stats.feedback_count,
+                  batch_stats.updated_at
+           FROM export_batches
+           LEFT JOIN batch_stats ON batch_stats.batch_id = export_batches.id
+           ORDER BY export_batches.id DESC
+           LIMIT 100`
+        )
+        .all()
+    };
+  });
+
+  app.get("/api/feedback", { preHandler: requireAdmin }, async () => {
+    return {
+      items: db
+        .prepare(
+          `SELECT feedback.id, export_batches.batch_code, feedback.region, feedback.carrier,
+                  feedback.device, feedback.client_app, feedback.is_usable, feedback.note, feedback.created_at
+           FROM feedback
+           LEFT JOIN export_batches ON export_batches.id = feedback.batch_id
+           ORDER BY feedback.id DESC
+           LIMIT 100`
+        )
+        .all()
     };
   });
 

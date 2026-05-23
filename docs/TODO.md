@@ -4,6 +4,7 @@
 
 - 推送 GitHub Private 私有仓库并确认远程分支可见。
 - 完成 `npm install`、类型检查、构建和敏感文件检查。
+- 在 VPS / Docker 环境按 `docs/RELEASE_CHECKLIST.md` 完成 v1.0.0 端到端验收。
 - v0.2.0：在 Linux/Docker 环境运行一次真实采集验证。
 - v0.2.0：根据真实采集结果微调 GitHub 查询词和候选文件筛选。
 - v0.2.0：补充更多单元测试或集成测试。

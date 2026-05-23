@@ -1,5 +1,20 @@
 # Changelog
 
+## v1.0.0 - 2026-05-23
+
+### Added
+
+- 标记第一版正式可用版。
+- 添加后台批次统计接口 `GET /api/stats/batches`。
+- 添加后台反馈数据接口 `GET /api/feedback`。
+- 添加 `docs/RELEASE_CHECKLIST.md`。
+
+### Changed
+
+- 应用版本更新为 v1.0.0。
+- README 更新为正式版说明。
+- 按用户要求，不主动 push GitHub，只本地提交，等待明确推送指令。
+
 ## v0.6.0 - 2026-05-23
 
 ### Added

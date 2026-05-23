@@ -1,5 +1,83 @@
 # Handoff Log
 
+## 2026-05-23 v1.0.0
+
+### 本次开发时间
+
+- 2026-05-23 Asia/Shanghai
+
+### 本次开发目标
+
+- 第一版正式可用版收口：系统需要能部署在 Debian / Ubuntu VPS，能通过浏览器登录后台，能采集公开节点、识别协议、去重、基础测试、候选池、延迟分布、自定义导出数量、加密节点包、公开领取页、访问/口令/下载/反馈统计、公开视频模式和完整文档交接。
+
+### 已完成功能
+
+- 应用版本更新为 v1.0.0。
+- 新增后台批次统计接口：`GET /api/stats/batches`。
+- 新增后台反馈数据接口：`GET /api/feedback`。
+- 新增发布检查清单 `docs/RELEASE_CHECKLIST.md`。
+- README 更新为 v1.0.0 正式版说明。
+
+### 修改文件
+
+- 修改 `package.json`
+- 修改 `apps/api/package.json`
+- 修改 `apps/api/src/routes.ts`
+- 修改 `apps/web/package.json`
+- 修改 `apps/web/src/main.tsx`
+- 修改 `README.md`
+- 修改 `docs/CHANGELOG.md`
+- 修改 `docs/DEVELOPMENT_LOG.md`
+- 修改 `docs/HANDOFF.md`
+- 修改 `docs/TODO.md`
+- 新增 `docs/RELEASE_CHECKLIST.md`
+
+### 删除文件
+
+- 无
+
+### 运行测试
+
+- 已执行：`node scripts/check-sensitive.mjs`，使用 Codex bundled Node 路径执行。
+- 已执行：UTF-8 内容扫描，确认 `apps/api/src/routes.ts`、`apps/web/src/main.tsx`、`README.md`、`docs/HANDOFF.md`、`docs/RELEASE_CHECKLIST.md` 无替换字符和明显乱码片段。
+- 未执行：`npm install`，当前环境没有可用 `npm` 命令。
+- 未执行：`npm run typecheck`，当前环境没有可用 `npm` 命令。
+- 未执行：`npm run build`，当前环境没有可用 `npm` 命令。
+- 未执行：Docker 构建和端到端验收，当前环境不是目标 Linux VPS，且缺少依赖安装。
+
+### 测试结果
+
+- 敏感文件检查通过：`Sensitive file check passed for 40 tracked or pending files.`
+- UTF-8 扫描通过：核心后端、前端和文档文件未发现替换字符或明显乱码片段。
+- 因本地环境缺少 `npm` 和 `docker`，依赖安装、类型检查、构建和端到端验收需在 VPS 或 Docker 环境继续验证。
+
+### 当前问题
+
+- 当前环境无法执行 npm/Docker 构建验证。
+- 当前环境无法解析 `github.com`。
+- 按用户要求，本阶段不主动 push GitHub。
+
+### 下一步建议
+
+- 在 VPS / Docker 环境执行 `docs/RELEASE_CHECKLIST.md`。
+- 用户明确指令后，再统一 push GitHub。
+
+### 敏感信息检查
+
+- 本阶段不包含真实 `.env`、Token、数据库、节点包、运行日志。
+- 运行数据目录、数据库、日志、节点包仍由 `.gitignore` 保护。
+
+### Git commit 信息
+
+- 本阶段提交信息计划：`chore: finalize v1.0.0 release`
+
+### 是否已 push 到 GitHub
+
+- 已按用户明确指令 push。执行一次性推送所有阶段分支：
+- `git push -u origin codex/v0.1.0-foundation codex/v0.2.0-collector codex/v0.3.0-testing codex/v0.4.0-export codex/v0.5.0-public-claim codex/v0.6.0-security-video codex/v1.0.0-release`
+- push 成功，GitHub 仓库：`https://github.com/webhuage-debug/jiandiancaiji.git`。
+- 本地为当前仓库配置了 Git 代理：`http.proxy` 和 `https.proxy` 均为 `http://127.0.0.1:7897`。
+
 ## 2026-05-23 v0.6.0
 
 ### 本次开发时间

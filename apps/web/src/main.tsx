@@ -290,7 +290,7 @@ function Dashboard({ user, onLogout }: { user: { username: string }; onLogout: (
         <header className="topbar">
           <div>
             <h1>首页仪表盘</h1>
-            <p>v0.6.0 安全版：公开视频模式、敏感信息脱敏和下载限速。</p>
+            <p>v1.0.0 正式版：采集、测试、导出、领取、反馈、统计和安全模式。</p>
           </div>
           <div className="top-actions">
             <button className={videoMode ? "icon active" : "icon"} onClick={toggleVideoMode} title="公开视频模式">
