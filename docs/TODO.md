@@ -1,5 +1,13 @@
 # TODO
 
+## 当前高优先级补充
+
+- 在 VPS 上验证最新前端：登录、开始采集、采集记录刷新、节点池显示、开始测试、测试记录刷新、节点包生成、领取页下载。
+- 在 VPS 上执行 Docker 构建和健康检查：`docker compose up -d --build`、`curl -I http://127.0.0.1:3000`、`docker logs --tail=120 public-node-admin`。
+- 继续完善录屏模式：节点内容、来源 URL、日志、路径、Token、Cookie、Session、用户反馈敏感字段全部脱敏。
+- 设计 Xray-core 二级真实代理检测：临时配置、127.0.0.1 本地监听、超时清理、日志脱敏、并发限制。
+- 后续补充 sing-box 检测到低优先级，优先保证当前 TCP 初筛和后台操作稳定。
+
 ## 高优先级
 
 - 推送 GitHub Private 私有仓库并确认远程分支可见。

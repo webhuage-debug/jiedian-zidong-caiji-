@@ -11,8 +11,12 @@
 - `apps/web/src/main.tsx`：后台左侧菜单现在会切换首页、节点池、采集任务、测试记录、失效记录、节点包、领取页、统计、反馈、设置、日志等页面。
 - `apps/web/src/main.tsx`：节点包批次列表新增“打开领取页”链接，点击后进入 `/p/{public_slug}` 公开领取页。
 - `apps/web/src/main.tsx`：领取页保留口令验证、下载加密 zip 节点包、反馈提交功能。
+- `apps/web/src/main.tsx`：统一后台和领取页 API 请求使用 `credentials: "same-origin"`，避免浏览器 Cookie 未携带导致按钮看起来无响应。
+- `apps/web/src/main.tsx`：公开领取页已移除节点数量、内部批次编号等后台信息，只保留标题、说明、口令、下载和反馈。
 - `apps/web/src/main.tsx`：补齐系统日志、统计数据、反馈数据的后台展示入口。
 - `apps/web/src/styles.css`：仅补充菜单图标、筛选控件、领取页链接、统计/日志表格所需的最小样式。
+- 已合并远程 `docs/ui-reference/`，并查看参考图：左侧固定菜单、浅色背景、白色卡片、绿色主色、清晰表格。
+- `apps/web/src/styles.css` 已按参考图做最小代价调整：白色侧栏、绿色选中菜单、浅底白卡、表格行距和按钮状态更明显。
 
 ### 给 VPS 的更新方式
 在 `/opt/public-node-admin` 目录执行：
@@ -36,6 +40,13 @@ http://你的域名:3000/p/批次slug
 - 已执行 UTF-8/乱码扫描，`apps/web/src/main.tsx`、`apps/web/src/styles.css`、`docs/HANDOFF.md` 均为 `utf8-ok`。
 - 已执行 `git diff --check`，没有发现空白错误。
 - 本地环境没有可用 `npm` 命令，无法在 Windows 本地执行 `npm run build`。
+- 当前没有 VPS SSH 会话和后台真实密码，尚未执行 Docker 日志、curl 登录、浏览器点击等 VPS 端验证；需要用户通过 SSH 工具提供临时验证结果或允许远程登录后继续。
+
+### GitHub / 分支状态
+- 本地修复提交：`4ed016e fix: make node testing responsive`
+- 本地修复提交：`fb5cece fix: wire admin navigation and claim links`
+- 已合并远程新增参考图提交：`be615c0`、`6d0a89d`、`40c1ca1`
+- 后续需要 push 到 `origin/codex/v1.0.0-release` 后，VPS 才能拉取这些修复。
 
 ### 敏感信息检查
 - 本次修复未提交 `.env`、数据库、节点文件、节点包、运行日志或真实口令。

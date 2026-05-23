@@ -126,10 +126,8 @@ type LogItem = {
 };
 
 type PublicBatch = {
-  batchCode: string;
   name: string;
   description: string;
-  nodeCount: number;
   expiresAt?: string | null;
   createdAt: string;
 };
@@ -161,6 +159,13 @@ const navItems: Array<{ key: ViewKey; label: string; icon: React.ReactNode }> = 
   { key: "logs", label: "运行日志", icon: <ScrollText size={17} /> }
 ];
 
+function apiFetch(input: RequestInfo | URL, init: RequestInit = {}) {
+  return fetch(input, {
+    credentials: "same-origin",
+    ...init
+  });
+}
+
 function App() {
   const publicMatch = window.location.pathname.match(/^\/p\/([^/]+)/);
   if (publicMatch) return <PublicClaimPage slug={publicMatch[1]} />;
@@ -171,7 +176,7 @@ function AdminApp() {
   const [auth, setAuth] = React.useState<AuthStatus | null>(null);
 
   React.useEffect(() => {
-    fetch("/api/auth/status")
+    apiFetch("/api/auth/status")
       .then((res) => res.json())
       .then(setAuth)
       .catch(() => setAuth({ authenticated: false }));
@@ -193,7 +198,7 @@ function Login({ onLogin }: { onLogin: (auth: AuthStatus) => void }) {
     event.preventDefault();
     setLoading(true);
     setError("");
-    const res = await fetch("/api/auth/login", {
+    const res = await apiFetch("/api/auth/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username, password })
@@ -295,17 +300,17 @@ function Dashboard({ user, onLogout }: { user: { username: string }; onLogout: (
       feedbackRes,
       logsRes
     ] = await Promise.all([
-      fetch("/api/dashboard/summary"),
-      fetch("/api/sources"),
-      fetch("/api/collection-runs"),
-      fetch("/api/test-runs"),
-      fetch(`/api/nodes?${nodeQuery.toString()}`),
-      fetch("/api/nodes?status=test_failed&limit=50"),
-      fetch("/api/export-batches"),
-      fetch("/api/settings/video-mode"),
-      fetch("/api/stats/batches"),
-      fetch("/api/feedback"),
-      fetch("/api/logs")
+      apiFetch("/api/dashboard/summary"),
+      apiFetch("/api/sources"),
+      apiFetch("/api/collection-runs"),
+      apiFetch("/api/test-runs"),
+      apiFetch(`/api/nodes?${nodeQuery.toString()}`),
+      apiFetch("/api/nodes?status=test_failed&limit=50"),
+      apiFetch("/api/export-batches"),
+      apiFetch("/api/settings/video-mode"),
+      apiFetch("/api/stats/batches"),
+      apiFetch("/api/feedback"),
+      apiFetch("/api/logs")
     ]);
     setSummary(await summaryRes.json());
     setSources((await sourcesRes.json()).items ?? []);
@@ -325,14 +330,14 @@ function Dashboard({ user, onLogout }: { user: { username: string }; onLogout: (
   }, [refresh]);
 
   async function logout() {
-    await fetch("/api/auth/logout", { method: "POST" });
+    await apiFetch("/api/auth/logout", { method: "POST" });
     onLogout();
   }
 
   async function runCollector() {
     setCollecting(true);
     setNotice("采集任务已开始，系统会限速抓取公开 URL...");
-    const res = await fetch("/api/collection-runs", { method: "POST" });
+    const res = await apiFetch("/api/collection-runs", { method: "POST" });
     const data = await res.json();
     setCollecting(false);
     if (!res.ok) {
@@ -346,7 +351,7 @@ function Dashboard({ user, onLogout }: { user: { username: string }; onLogout: (
   async function runTester() {
     setTesting(true);
     setNotice("基础测试已开始，正在并发测试前 100 条待测试节点，请稍候...");
-    const res = await fetch("/api/test-runs", {
+    const res = await apiFetch("/api/test-runs", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ limit: 100 })
@@ -369,7 +374,7 @@ function Dashboard({ user, onLogout }: { user: { username: string }; onLogout: (
     }
     setExporting(true);
     setNotice("正在生成节点包...");
-    const res = await fetch("/api/export-batches", {
+    const res = await apiFetch("/api/export-batches", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -396,7 +401,7 @@ function Dashboard({ user, onLogout }: { user: { username: string }; onLogout: (
 
   async function toggleVideoMode() {
     const next = !videoMode;
-    await fetch("/api/settings/video-mode", {
+    await apiFetch("/api/settings/video-mode", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ enabled: next })
@@ -794,7 +799,7 @@ function PublicClaimPage({ slug }: { slug: string }) {
   });
 
   React.useEffect(() => {
-    fetch(`/api/public/batches/${slug}${window.location.search}`)
+    apiFetch(`/api/public/batches/${slug}${window.location.search}`)
       .then((res) => res.json())
       .then((data) => {
         setFound(data.found);
@@ -807,7 +812,7 @@ function PublicClaimPage({ slug }: { slug: string }) {
   async function verify(event: React.FormEvent) {
     event.preventDefault();
     setMessage("");
-    const res = await fetch(`/api/public/batches/${slug}/verify${window.location.search}`, {
+    const res = await apiFetch(`/api/public/batches/${slug}/verify${window.location.search}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ passphrase })
@@ -823,7 +828,7 @@ function PublicClaimPage({ slug }: { slug: string }) {
 
   async function submitFeedback(event: React.FormEvent) {
     event.preventDefault();
-    const res = await fetch(`/api/public/batches/${slug}/feedback${window.location.search}`, {
+    const res = await apiFetch(`/api/public/batches/${slug}/feedback${window.location.search}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(feedback)
@@ -839,10 +844,8 @@ function PublicClaimPage({ slug }: { slug: string }) {
     <main className="public-shell">
       <section className="public-panel">
         <h1>{batch?.name ?? "节点包领取"}</h1>
-        <p className="muted">批次编号：{batch?.batchCode ?? "-"}</p>
         <p>{batch?.description || "输入正确口令后即可下载加密节点包。领取页不会直接展示完整节点。"}</p>
         <div className="public-meta">
-          <span>节点数量：{batch?.nodeCount ?? 0}</span>
           <span>有效期：{batch?.expiresAt ? new Date(batch.expiresAt).toLocaleString() : "未设置"}</span>
         </div>
 

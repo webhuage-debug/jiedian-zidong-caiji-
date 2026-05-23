@@ -269,3 +269,38 @@
 - 已新增 `scripts/deploy-vps.sh`。
 - 已在 `README.md` 和 `docs/DEPLOY.md` 写入一键部署命令。
 - 私有仓库部署时推荐使用只读 GitHub Token，通过 `GITHUB_TOKEN` 环境变量传入，不写入 `.env`。
+# 2026-05-23 修复后台交互与 UI 最小重构
+
+## 开发工具或 AI
+- Codex
+
+## 本次任务
+- 修复后台按钮点击无明显反馈、菜单不切换、领取页入口不清晰的问题。
+- 按 `docs/ui-reference/` 参考风格做最小代价 UI 调整。
+- 保持公开领取页极简，避免展示后台内部信息。
+
+## 实现思路
+- 保留现有 React/Fastify/SQLite 架构，不重写业务模块。
+- 前端增加真实菜单状态，让左侧菜单进入独立页面。
+- 前端统一 API 请求携带 `credentials: "same-origin"`。
+- 节点包列表提供“打开领取页”链接，方便直接进入公开领取页。
+- 公开领取页删除节点数量、内部批次编号等不必要信息。
+- CSS 参考图采用白色侧栏、浅色背景、绿色主色、白色卡片、清晰表格。
+
+## 遇到的问题
+- 本地原分支落后远程 3 个提交，远程新增了 `docs/ui-reference/` 图片和 README。
+- 本地环境没有可用 `npm` 命令，无法直接执行前端构建。
+- 当前没有 VPS SSH 会话和后台真实密码，无法由 Codex 直接完成 VPS 端 curl 登录和 Docker 日志验证。
+
+## 解决方式
+- 已合并 `origin/codex/v1.0.0-release`，保留用户上传的 UI 参考图。
+- 使用本地图片查看参考 UI，按最小范围调整前端页面与样式。
+- 使用敏感文件检查和 UTF-8 扫描代替本地构建检查。
+
+## 未解决问题
+- VPS 端真实 Docker、curl 登录、浏览器点击验证仍需用户提供 SSH 结果或授权远程登录后继续。
+- Xray-core 真实代理检测尚未实现。
+
+## 后续建议
+- 在 VPS 执行 `git pull --ff-only origin codex/v1.0.0-release && docker compose up -d --build` 后验证采集、测试、节点包和领取页。
+- 后续单独开发 Xray-core 二级真实代理检测，不要混入本次 UI 修复。
