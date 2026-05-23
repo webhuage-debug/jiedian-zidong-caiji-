@@ -134,7 +134,7 @@ function cookieOptions() {
   return {
     httpOnly: true,
     sameSite: "lax" as const,
-    secure: config.isProduction,
+    secure: config.COOKIE_SECURE,
     path: "/",
     maxAge: Math.floor(config.SESSION_TTL_MS / 1000)
   };

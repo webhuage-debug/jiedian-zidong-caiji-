@@ -57,6 +57,9 @@ docker compose up -d
 - `SESSION_SECRET`
 - `PUBLIC_BASE_URL`
 
+如果直接用 `http://服务器IP:3000` 访问，保持 `SESSION_COOKIE_SECURE=auto` 即可，系统会自动允许 HTTP Cookie。  
+如果前面接入 HTTPS 反代或域名，`PUBLIC_BASE_URL` 使用 `https://...`，系统会自动启用 Secure Cookie。
+
 ## 访问后台
 
 ```text

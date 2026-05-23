@@ -1,5 +1,28 @@
 # Handoff Log
 
+## 2026-05-23 VPS 登录/界面无反应修复
+
+### 问题
+
+- 用户反馈安装到 VPS 后操作界面没有反应。
+- 代码检查发现生产环境 Cookie 使用 `secure: config.isProduction`。
+- Docker 部署默认 `NODE_ENV=production`，如果通过 `http://服务器IP:3000` 访问，浏览器不会保存/发送 Secure Cookie。
+- 结果表现为登录、公开视频模式、领取页解锁等依赖 Cookie 的操作看起来没有反应。
+
+### 修复
+
+- 新增环境变量 `SESSION_COOKIE_SECURE=auto|true|false`。
+- 默认 `auto`，当 `PUBLIC_BASE_URL` 以 `https://` 开头时启用 Secure Cookie；HTTP 直连 VPS 时关闭 Secure Cookie。
+- 后台登录 Cookie 和公开领取页解锁 Cookie 都改用 `config.COOKIE_SECURE`。
+- `.env.example` 和 `scripts/deploy-vps.sh` 已写入 `SESSION_COOKIE_SECURE=auto`。
+- `README.md` 和 `docs/DEPLOY.md` 已补充说明。
+
+### 部署更新建议
+
+- VPS 上拉取最新代码后执行：`docker compose up -d --build`。
+- 如果仍使用 HTTP 直连，确认 `.env` 中 `PUBLIC_BASE_URL=http://服务器IP:3000`，并设置或保留 `SESSION_COOKIE_SECURE=auto`。
+- 如果使用 HTTPS 域名，设置 `PUBLIC_BASE_URL=https://你的域名`。
+
 ## 2026-05-23 v1.0.0
 
 ### 本次开发时间

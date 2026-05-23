@@ -11,6 +11,7 @@ const envSchema = z.object({
   ADMIN_USERNAME: z.string().min(3).default("admin"),
   ADMIN_PASSWORD: z.string().min(8).default("change-this-password-before-deploy"),
   SESSION_SECRET: z.string().min(32).default("dev-session-secret-change-me-please-32"),
+  SESSION_COOKIE_SECURE: z.enum(["auto", "true", "false"]).default("auto"),
   SESSION_TTL_HOURS: z.coerce.number().int().positive().default(8),
   LOGIN_MAX_FAILURES: z.coerce.number().int().positive().default(5),
   LOGIN_LOCK_MINUTES: z.coerce.number().int().positive().default(15),
@@ -32,6 +33,10 @@ const envSchema = z.object({
 
 const parsed = envSchema.parse(process.env);
 const dataDir = path.resolve(parsed.DATA_DIR);
+const publicBaseUrl = parsed.PUBLIC_BASE_URL.trim();
+const cookieSecure =
+  parsed.SESSION_COOKIE_SECURE === "true" ||
+  (parsed.SESSION_COOKIE_SECURE === "auto" && publicBaseUrl.toLowerCase().startsWith("https://"));
 
 export const config = {
   ...parsed,
@@ -46,5 +51,6 @@ export const config = {
   PUBLIC_SOURCE_SEEDS: parsed.PUBLIC_SOURCE_SEEDS.split(",")
     .map((value) => value.trim())
     .filter(Boolean),
+  COOKIE_SECURE: cookieSecure,
   isProduction: parsed.NODE_ENV === "production"
 };

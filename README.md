@@ -108,6 +108,7 @@ npm run dev
 - `ADMIN_USERNAME`：首次初始化管理员账号
 - `ADMIN_PASSWORD`：首次初始化管理员密码
 - `SESSION_SECRET`：Session Cookie 签名密钥，生产环境必须换成长随机字符串
+- `SESSION_COOKIE_SECURE`：Cookie Secure 策略，默认 `auto`；HTTP 直连 VPS 自动关闭，HTTPS 自动开启
 - `DATABASE_PATH`：SQLite 数据库路径
 - `EXPORT_DIR`：后续节点包导出目录
 - `LOGIN_MAX_FAILURES`：登录失败锁定阈值

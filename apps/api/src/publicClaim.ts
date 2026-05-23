@@ -156,7 +156,7 @@ function setUnlockCookie(reply: FastifyReply, slug: string) {
   reply.setCookie(unlockCookieName(slug), `unlocked:${slug}`, {
     httpOnly: true,
     sameSite: "lax",
-    secure: config.isProduction,
+    secure: config.COOKIE_SECURE,
     path: `/`,
     signed: true,
     maxAge: 60 * 60 * 2
