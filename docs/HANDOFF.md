@@ -1,5 +1,46 @@
 # Handoff Log
 
+## 2026-05-23 菜单栏与领取页入口修复
+
+### 本次开发目标
+- 修复后台左侧菜单点击无反应的问题。
+- 修复节点包生成后领取页只有路径文本、不方便进入的问题。
+- 保持当前阶段只做可用性修复，不继续做额外 UI 美化调整。
+
+### 已完成
+- `apps/web/src/main.tsx`：后台左侧菜单现在会切换首页、节点池、采集任务、测试记录、失效记录、节点包、领取页、统计、反馈、设置、日志等页面。
+- `apps/web/src/main.tsx`：节点包批次列表新增“打开领取页”链接，点击后进入 `/p/{public_slug}` 公开领取页。
+- `apps/web/src/main.tsx`：领取页保留口令验证、下载加密 zip 节点包、反馈提交功能。
+- `apps/web/src/main.tsx`：补齐系统日志、统计数据、反馈数据的后台展示入口。
+- `apps/web/src/styles.css`：仅补充菜单图标、筛选控件、领取页链接、统计/日志表格所需的最小样式。
+
+### 给 VPS 的更新方式
+在 `/opt/public-node-admin` 目录执行：
+
+```bash
+git pull --ff-only origin codex/v1.0.0-release
+grep -q '^TEST_MAX_CONCURRENCY=' .env || echo 'TEST_MAX_CONCURRENCY=20' >> .env
+docker compose up -d --build
+```
+
+更新后浏览器强制刷新后台页面。生成节点包后，在“节点包管理”或“领取页管理”里点击“打开领取页”。完整领取地址格式为：
+
+```text
+http://你的域名:3000/p/批次slug
+```
+
+例如截图里的路径 `/p/Xy8sMnQ8Xt1gdwUH`，完整地址就是 `http://jd.huage.us:3000/p/Xy8sMnQ8Xt1gdwUH`。
+
+### 测试记录
+- 已执行 `node scripts/check-sensitive.mjs`，结果通过：`Sensitive file check passed for 41 tracked or pending files.`
+- 已执行 UTF-8/乱码扫描，`apps/web/src/main.tsx`、`apps/web/src/styles.css`、`docs/HANDOFF.md` 均为 `utf8-ok`。
+- 已执行 `git diff --check`，没有发现空白错误。
+- 本地环境没有可用 `npm` 命令，无法在 Windows 本地执行 `npm run build`。
+
+### 敏感信息检查
+- 本次修复未提交 `.env`、数据库、节点文件、节点包、运行日志或真实口令。
+- 用户截图中曾出现后台密码信息，后续建议在 VPS 上自行修改管理员密码。
+
 ## 2026-05-23 按钮点击无明显反馈修复
 
 ### 问题

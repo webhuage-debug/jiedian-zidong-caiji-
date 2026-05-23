@@ -14,7 +14,8 @@ body {
 
 button,
 input,
-textarea {
+textarea,
+select {
   font: inherit;
 }
 
@@ -144,6 +145,15 @@ input {
   background: #fff;
 }
 
+select {
+  width: 100%;
+  border: 1px solid #c9d5d9;
+  border-radius: 6px;
+  min-height: 44px;
+  padding: 0 12px;
+  background: #fff;
+}
+
 textarea {
   width: 100%;
   min-height: 96px;
@@ -189,6 +199,7 @@ textarea {
   align-items: center;
   justify-content: center;
   gap: 8px;
+  text-decoration: none;
 }
 
 .primary:disabled {
@@ -216,9 +227,12 @@ textarea {
 }
 
 .sidebar {
-  background: #142126;
+  background: #132428;
   color: #edf5f5;
   padding: 18px;
+  position: sticky;
+  top: 0;
+  height: 100vh;
 }
 
 .sidebar-title {
@@ -240,6 +254,9 @@ textarea {
   padding: 0 12px;
   margin-bottom: 6px;
   cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 9px;
 }
 
 .nav.active,
@@ -250,6 +267,8 @@ textarea {
 
 .content {
   padding: 28px;
+  max-width: 1600px;
+  width: 100%;
 }
 
 .topbar {
@@ -272,6 +291,7 @@ textarea {
   border: 1px solid #cbd7da;
   border-radius: 6px;
   background: #fff;
+  color: #203038;
 }
 
 .icon.active {
@@ -314,6 +334,7 @@ textarea {
 .panel {
   padding: 20px;
   margin-bottom: 18px;
+  box-shadow: 0 12px 30px rgba(22, 38, 45, 0.05);
 }
 
 .panel-title {
@@ -402,6 +423,11 @@ textarea {
   background: #fbfcfc;
 }
 
+.table-row:hover {
+  border-color: #c8d9dd;
+  background: #fff;
+}
+
 .run-grid {
   grid-template-columns: 70px 1fr 1fr 1fr 1fr 1fr;
 }
@@ -411,11 +437,30 @@ textarea {
 }
 
 .node-grid {
-  grid-template-columns: 80px 120px 130px 90px minmax(0, 1fr);
+  grid-template-columns: 80px 120px 130px 90px 160px minmax(0, 1fr);
 }
 
 .batch-grid {
   grid-template-columns: 150px minmax(0, 1fr) 90px 70px minmax(0, 1fr);
+}
+
+.stats-grid {
+  grid-template-columns: 150px repeat(6, minmax(70px, 1fr));
+}
+
+.feedback-grid {
+  grid-template-columns: 130px 100px 100px 100px 120px 70px minmax(0, 1fr);
+}
+
+.log-grid {
+  grid-template-columns: 180px 80px minmax(0, 1fr);
+}
+
+.filter-form {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(140px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
 }
 
 .export-form {
@@ -436,6 +481,30 @@ textarea {
 .check-row input {
   width: 18px;
   min-height: 18px;
+}
+
+.row-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.text-link {
+  color: #0f6d75;
+  font-weight: 750;
+  text-decoration: none;
+}
+
+.text-link:hover {
+  text-decoration: underline;
+}
+
+.settings-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 18px;
+  align-items: center;
 }
 
 .spaced {
@@ -474,6 +543,10 @@ textarea {
   .source-grid,
   .node-grid,
   .batch-grid,
+  .stats-grid,
+  .feedback-grid,
+  .log-grid,
+  .filter-form,
   .export-form {
     grid-template-columns: 1fr 1fr;
   }

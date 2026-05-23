@@ -1,6 +1,26 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { Activity, Database, Eye, EyeOff, Gauge, GitBranch, LogOut, Play, ShieldCheck, Video } from "lucide-react";
+import {
+  Activity,
+  BarChart3,
+  Database,
+  Download,
+  Eye,
+  EyeOff,
+  FileArchive,
+  Gauge,
+  GitBranch,
+  Home,
+  Link2,
+  ListFilter,
+  LogOut,
+  MessageSquare,
+  Play,
+  ScrollText,
+  Settings,
+  ShieldCheck,
+  Video
+} from "lucide-react";
 import "./styles.css";
 
 type AuthStatus = {
@@ -41,10 +61,15 @@ type TestRun = {
 type NodeItem = {
   id: number;
   protocol: string;
+  source_url?: string;
   source_type?: string;
+  collected_at?: string;
+  last_tested_at?: string;
   latency_ms?: number;
   status: string;
   failure_reason?: string;
+  exported_at?: string;
+  export_batch_id?: number;
 };
 
 type ExportBatch = {
@@ -63,6 +88,41 @@ type SourceItem = {
   status: string;
   success_count: number;
   failure_count: number;
+  last_error?: string;
+};
+
+type BatchStat = {
+  id: number;
+  batch_code: string;
+  name: string;
+  status: string;
+  node_count: number;
+  public_slug: string;
+  view_count?: number;
+  passphrase_attempt_count?: number;
+  passphrase_correct_count?: number;
+  passphrase_wrong_count?: number;
+  unlock_count?: number;
+  download_count?: number;
+  feedback_count?: number;
+};
+
+type FeedbackItem = {
+  id: number;
+  batch_code?: string;
+  region?: string;
+  carrier?: string;
+  device?: string;
+  client_app?: string;
+  is_usable?: number | null;
+  note?: string;
+  created_at?: string;
+};
+
+type LogItem = {
+  level: string;
+  message: string;
+  created_at: string;
 };
 
 type PublicBatch = {
@@ -73,6 +133,33 @@ type PublicBatch = {
   expiresAt?: string | null;
   createdAt: string;
 };
+
+type ViewKey =
+  | "dashboard"
+  | "nodes"
+  | "collection"
+  | "tests"
+  | "failed"
+  | "packages"
+  | "claim"
+  | "stats"
+  | "feedback"
+  | "settings"
+  | "logs";
+
+const navItems: Array<{ key: ViewKey; label: string; icon: React.ReactNode }> = [
+  { key: "dashboard", label: "首页仪表盘", icon: <Home size={17} /> },
+  { key: "nodes", label: "节点池", icon: <Database size={17} /> },
+  { key: "collection", label: "采集任务", icon: <GitBranch size={17} /> },
+  { key: "tests", label: "测试记录", icon: <Activity size={17} /> },
+  { key: "failed", label: "失效节点记录", icon: <ListFilter size={17} /> },
+  { key: "packages", label: "节点包管理", icon: <FileArchive size={17} /> },
+  { key: "claim", label: "领取页管理", icon: <Link2 size={17} /> },
+  { key: "stats", label: "统计数据", icon: <BarChart3 size={17} /> },
+  { key: "feedback", label: "反馈数据", icon: <MessageSquare size={17} /> },
+  { key: "settings", label: "系统设置", icon: <Settings size={17} /> },
+  { key: "logs", label: "运行日志", icon: <ScrollText size={17} /> }
+];
 
 function App() {
   const publicMatch = window.location.pathname.match(/^\/p\/([^/]+)/);
@@ -158,17 +245,28 @@ function Login({ onLogin }: { onLogin: (auth: AuthStatus) => void }) {
 }
 
 function Dashboard({ user, onLogout }: { user: { username: string }; onLogout: () => void }) {
+  const [activeView, setActiveView] = React.useState<ViewKey>("dashboard");
   const [summary, setSummary] = React.useState<Summary | null>(null);
   const [sources, setSources] = React.useState<SourceItem[]>([]);
   const [runs, setRuns] = React.useState<CollectionRun[]>([]);
   const [testRuns, setTestRuns] = React.useState<TestRun[]>([]);
   const [nodes, setNodes] = React.useState<NodeItem[]>([]);
+  const [failedNodes, setFailedNodes] = React.useState<NodeItem[]>([]);
   const [batches, setBatches] = React.useState<ExportBatch[]>([]);
+  const [stats, setStats] = React.useState<BatchStat[]>([]);
+  const [feedback, setFeedback] = React.useState<FeedbackItem[]>([]);
+  const [logs, setLogs] = React.useState<LogItem[]>([]);
   const [videoMode, setVideoMode] = React.useState(false);
   const [collecting, setCollecting] = React.useState(false);
   const [testing, setTesting] = React.useState(false);
   const [exporting, setExporting] = React.useState(false);
   const [notice, setNotice] = React.useState("");
+  const [nodeFilters, setNodeFilters] = React.useState({
+    protocol: "",
+    status: "test_passed",
+    maxLatency: "",
+    exported: ""
+  });
   const [exportForm, setExportForm] = React.useState({
     name: "本期候选节点",
     count: 10,
@@ -178,23 +276,49 @@ function Dashboard({ user, onLogout }: { user: { username: string }; onLogout: (
   });
 
   const refresh = React.useCallback(async () => {
-    const [summaryRes, sourcesRes, runsRes, testRunsRes, nodesRes, batchesRes, videoModeRes] = await Promise.all([
+    const nodeQuery = new URLSearchParams({ limit: "50" });
+    if (nodeFilters.protocol) nodeQuery.set("protocol", nodeFilters.protocol);
+    if (nodeFilters.status) nodeQuery.set("status", nodeFilters.status);
+    if (nodeFilters.maxLatency) nodeQuery.set("maxLatency", nodeFilters.maxLatency);
+    if (nodeFilters.exported) nodeQuery.set("exported", nodeFilters.exported);
+
+    const [
+      summaryRes,
+      sourcesRes,
+      runsRes,
+      testRunsRes,
+      nodesRes,
+      failedNodesRes,
+      batchesRes,
+      videoModeRes,
+      statsRes,
+      feedbackRes,
+      logsRes
+    ] = await Promise.all([
       fetch("/api/dashboard/summary"),
       fetch("/api/sources"),
       fetch("/api/collection-runs"),
       fetch("/api/test-runs"),
-      fetch("/api/nodes?limit=8"),
+      fetch(`/api/nodes?${nodeQuery.toString()}`),
+      fetch("/api/nodes?status=test_failed&limit=50"),
       fetch("/api/export-batches"),
-      fetch("/api/settings/video-mode")
+      fetch("/api/settings/video-mode"),
+      fetch("/api/stats/batches"),
+      fetch("/api/feedback"),
+      fetch("/api/logs")
     ]);
     setSummary(await summaryRes.json());
     setSources((await sourcesRes.json()).items ?? []);
     setRuns((await runsRes.json()).items ?? []);
     setTestRuns((await testRunsRes.json()).items ?? []);
     setNodes((await nodesRes.json()).items ?? []);
+    setFailedNodes((await failedNodesRes.json()).items ?? []);
     setBatches((await batchesRes.json()).items ?? []);
     setVideoMode(Boolean((await videoModeRes.json()).enabled));
-  }, []);
+    setStats((await statsRes.json()).items ?? []);
+    setFeedback((await feedbackRes.json()).items ?? []);
+    setLogs((await logsRes.json()).items ?? []);
+  }, [nodeFilters]);
 
   React.useEffect(() => {
     refresh();
@@ -207,7 +331,7 @@ function Dashboard({ user, onLogout }: { user: { username: string }; onLogout: (
 
   async function runCollector() {
     setCollecting(true);
-    setNotice("");
+    setNotice("采集任务已开始，系统会限速抓取公开 URL...");
     const res = await fetch("/api/collection-runs", { method: "POST" });
     const data = await res.json();
     setCollecting(false);
@@ -261,17 +385,17 @@ function Dashboard({ user, onLogout }: { user: { username: string }; onLogout: (
     const data = await res.json();
     setExporting(false);
     if (!res.ok) {
-      setNotice(data.message ?? "导出失败");
+      setNotice(data.message === "no eligible nodes for export" ? "没有符合条件的已通过节点，请先运行基础测试或放宽最大延迟。" : data.message ?? "导出失败");
       return;
     }
-    setNotice(`已生成批次 ${data.batch.batchCode}，导出节点 ${data.batch.nodeCount} 条。`);
+    setNotice(`节点包已生成：${data.batch.batchCode}，数量 ${data.batch.nodeCount} 条。`);
+    setActiveView("packages");
     setExportForm((value) => ({ ...value, passphrase: "" }));
     await refresh();
   }
 
   async function toggleVideoMode() {
     const next = !videoMode;
-    setVideoMode(next);
     await fetch("/api/settings/video-mode", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -280,20 +404,31 @@ function Dashboard({ user, onLogout }: { user: { username: string }; onLogout: (
     await refresh();
   }
 
+  const currentNav = navItems.find((item) => item.key === activeView) ?? navItems[0];
   const displayUser = videoMode ? "已隐藏" : user.username;
 
   return (
     <main className="app-shell">
       <aside className="sidebar">
         <div className="sidebar-title"><Gauge size={24} /> 管理后台</div>
-        {["首页仪表盘", "节点池", "采集任务", "测试记录", "失效记录", "节点包", "领取页", "统计数据", "反馈数据", "系统设置", "运行日志"].map((item) => (
-          <button key={item} className={item === "首页仪表盘" ? "nav active" : "nav"}>{item}</button>
-        ))}
+        <nav aria-label="后台菜单">
+          {navItems.map((item) => (
+            <button
+              key={item.key}
+              className={item.key === activeView ? "nav active" : "nav"}
+              onClick={() => setActiveView(item.key)}
+              type="button"
+            >
+              {item.icon}
+              {item.label}
+            </button>
+          ))}
+        </nav>
       </aside>
       <section className="content">
         <header className="topbar">
           <div>
-            <h1>首页仪表盘</h1>
+            <h1>{currentNav.label}</h1>
             <p>v1.0.0 正式版：采集、测试、导出、领取、反馈、统计和安全模式。</p>
           </div>
           <div className="top-actions">
@@ -306,81 +441,340 @@ function Dashboard({ user, onLogout }: { user: { username: string }; onLogout: (
           </div>
         </header>
 
-        <section className="metrics">
-          <Metric label="已采集节点" value={summary?.collectedNodes ?? 0} />
-          <Metric label="待测试节点" value={summary?.pendingNodes ?? 0} />
-          <Metric label="候选节点" value={summary?.candidateNodes ?? 0} />
-          <Metric label="失败/剔除" value={summary?.failedNodes ?? 0} />
-        </section>
-
         {notice && <div className="notice">{notice}</div>}
 
-        <section className="panel">
-          <div className="panel-title">
-            <div>
-              <h2>节点包导出</h2>
-              <p className="muted compact">默认导出 10 条，可手动改成 11、20、30 或自定义数量。</p>
-            </div>
-          </div>
-          <form className="export-form" onSubmit={createExport}>
-            <label>
-              批次名称
-              <input value={exportForm.name} onChange={(event) => setExportForm((value) => ({ ...value, name: event.target.value }))} />
-            </label>
-            <label>
-              导出数量
-              <input type="number" min="1" max="1000" value={exportForm.count} onChange={(event) => setExportForm((value) => ({ ...value, count: Number(event.target.value) }))} />
-            </label>
-            <label>
-              最大延迟 ms
-              <input placeholder="例如 300" value={exportForm.maxLatencyMs} onChange={(event) => setExportForm((value) => ({ ...value, maxLatencyMs: event.target.value }))} />
-            </label>
-            <label>
-              本期口令
-              <input type="password" value={exportForm.passphrase} onChange={(event) => setExportForm((value) => ({ ...value, passphrase: event.target.value }))} required />
-            </label>
-            <label className="check-row">
-              <input type="checkbox" checked={exportForm.publish} onChange={(event) => setExportForm((value) => ({ ...value, publish: event.target.checked }))} />
-              发布领取页
-            </label>
-            <button className="primary small" disabled={exporting}>{exporting ? "生成中..." : "生成节点包"}</button>
-          </form>
-          <BatchTable batches={batches} />
-        </section>
+        {activeView === "dashboard" && (
+          <>
+            <Metrics summary={summary} />
+            <LatencyDistribution summary={summary} />
+            <NodePreview title="低延迟候选节点预览" nodes={nodes.slice(0, 8)} />
+            <BatchTable batches={batches} compact />
+          </>
+        )}
 
-        <section className="panel">
-          <div className="panel-title">
-            <div>
-              <h2>采集任务</h2>
-              <p className="muted compact">采集任务已限制频率和并发，只抓取公开 URL。</p>
-            </div>
-            <button className="primary small" onClick={runCollector} disabled={collecting}>
-              <Play size={16} />
-              {collecting ? "采集中..." : "开始采集"}
-            </button>
-          </div>
-          <RunTable runs={runs} />
-        </section>
+        {activeView === "nodes" && (
+          <NodesPanel
+            nodes={nodes}
+            filters={nodeFilters}
+            onFiltersChange={setNodeFilters}
+            onRefresh={refresh}
+          />
+        )}
 
-        <section className="panel">
-          <div className="panel-title">
-            <div>
-              <h2>基础测试</h2>
-              <p className="muted compact">只做后台初筛 TCP 连通性测试，失败节点不进入候选池。</p>
-            </div>
-            <button className="primary small" onClick={runTester} disabled={testing}>
-              <Activity size={16} />
-              {testing ? "测试中..." : "开始测试"}
-            </button>
-          </div>
-          <TestRunTable runs={testRuns} />
-        </section>
+        {activeView === "collection" && (
+          <CollectionPanel runs={runs} sources={sources} videoMode={videoMode} collecting={collecting} onRun={runCollector} />
+        )}
 
-        <NodePreview nodes={nodes} />
-        <SourceCache sources={sources} videoMode={videoMode} />
-        <LatencyDistribution summary={summary} />
+        {activeView === "tests" && (
+          <TestPanel runs={testRuns} testing={testing} onRun={runTester} />
+        )}
+
+        {activeView === "failed" && (
+          <NodePreview title="失效节点记录" nodes={failedNodes} />
+        )}
+
+        {activeView === "packages" && (
+          <ExportPanel form={exportForm} setForm={setExportForm} exporting={exporting} onSubmit={createExport} batches={batches} />
+        )}
+
+        {activeView === "claim" && (
+          <ClaimPanel batches={batches} />
+        )}
+
+        {activeView === "stats" && (
+          <StatsPanel stats={stats} />
+        )}
+
+        {activeView === "feedback" && (
+          <FeedbackPanel feedback={feedback} />
+        )}
+
+        {activeView === "settings" && (
+          <SettingsPanel videoMode={videoMode} onToggleVideoMode={toggleVideoMode} summary={summary} />
+        )}
+
+        {activeView === "logs" && (
+          <LogsPanel logs={logs} />
+        )}
       </section>
     </main>
+  );
+}
+
+function Metrics({ summary }: { summary: Summary | null }) {
+  return (
+    <section className="metrics">
+      <Metric label="已采集节点" value={summary?.collectedNodes ?? 0} />
+      <Metric label="待测试节点" value={summary?.pendingNodes ?? 0} />
+      <Metric label="候选节点" value={summary?.candidateNodes ?? 0} />
+      <Metric label="失败/剔除" value={summary?.failedNodes ?? 0} />
+    </section>
+  );
+}
+
+function NodesPanel({
+  nodes,
+  filters,
+  onFiltersChange,
+  onRefresh
+}: {
+  nodes: NodeItem[];
+  filters: { protocol: string; status: string; maxLatency: string; exported: string };
+  onFiltersChange: React.Dispatch<React.SetStateAction<{ protocol: string; status: string; maxLatency: string; exported: string }>>;
+  onRefresh: () => void;
+}) {
+  return (
+    <section className="panel">
+      <div className="panel-title">
+        <div>
+          <h2>候选节点池</h2>
+          <p className="muted compact">默认只显示基础测试通过的节点，可以按协议、状态、延迟和导出状态筛选。</p>
+        </div>
+        <button className="primary small" onClick={onRefresh} type="button">刷新</button>
+      </div>
+      <div className="filter-form">
+        <label>
+          协议
+          <select value={filters.protocol} onChange={(event) => onFiltersChange((value) => ({ ...value, protocol: event.target.value }))}>
+            <option value="">全部</option>
+            <option value="vmess">vmess</option>
+            <option value="vless">vless</option>
+            <option value="trojan">trojan</option>
+            <option value="ss">ss</option>
+            <option value="ssr">ssr</option>
+            <option value="hysteria2">hysteria2</option>
+            <option value="hy2">hy2</option>
+            <option value="tuic">tuic</option>
+          </select>
+        </label>
+        <label>
+          状态
+          <select value={filters.status} onChange={(event) => onFiltersChange((value) => ({ ...value, status: event.target.value }))}>
+            <option value="test_passed">测试通过</option>
+            <option value="pending_test">待测试</option>
+            <option value="test_failed">测试失败</option>
+            <option value="exported">已导出</option>
+            <option value="">全部</option>
+          </select>
+        </label>
+        <label>
+          最大延迟 ms
+          <input value={filters.maxLatency} placeholder="例如 300" onChange={(event) => onFiltersChange((value) => ({ ...value, maxLatency: event.target.value }))} />
+        </label>
+        <label>
+          导出状态
+          <select value={filters.exported} onChange={(event) => onFiltersChange((value) => ({ ...value, exported: event.target.value }))}>
+            <option value="">全部</option>
+            <option value="false">未导出</option>
+            <option value="true">已导出</option>
+          </select>
+        </label>
+      </div>
+      <NodeTable nodes={nodes} />
+    </section>
+  );
+}
+
+function CollectionPanel({
+  runs,
+  sources,
+  videoMode,
+  collecting,
+  onRun
+}: {
+  runs: CollectionRun[];
+  sources: SourceItem[];
+  videoMode: boolean;
+  collecting: boolean;
+  onRun: () => void;
+}) {
+  return (
+    <>
+      <section className="panel">
+        <div className="panel-title">
+          <div>
+            <h2>采集任务</h2>
+            <p className="muted compact">采集任务已限制频率和并发，只抓取公开 URL。</p>
+          </div>
+          <button className="primary small" onClick={onRun} disabled={collecting}>
+            <Play size={16} />
+            {collecting ? "采集中..." : "开始采集"}
+          </button>
+        </div>
+        <RunTable runs={runs} />
+      </section>
+      <SourceCache sources={sources} videoMode={videoMode} />
+    </>
+  );
+}
+
+function TestPanel({ runs, testing, onRun }: { runs: TestRun[]; testing: boolean; onRun: () => void }) {
+  return (
+    <section className="panel">
+      <div className="panel-title">
+        <div>
+          <h2>基础测试</h2>
+          <p className="muted compact">只做后台初筛 TCP 连通性测试，失败节点不进入候选池。</p>
+        </div>
+        <button className="primary small" onClick={onRun} disabled={testing}>
+          <Activity size={16} />
+          {testing ? "测试中..." : "开始测试"}
+        </button>
+      </div>
+      <TestRunTable runs={runs} />
+    </section>
+  );
+}
+
+function ExportPanel({
+  form,
+  setForm,
+  exporting,
+  onSubmit,
+  batches
+}: {
+  form: { name: string; count: number; maxLatencyMs: string; passphrase: string; publish: boolean };
+  setForm: React.Dispatch<React.SetStateAction<{ name: string; count: number; maxLatencyMs: string; passphrase: string; publish: boolean }>>;
+  exporting: boolean;
+  onSubmit: (event: React.FormEvent) => void;
+  batches: ExportBatch[];
+}) {
+  return (
+    <section className="panel">
+      <div className="panel-title">
+        <div>
+          <h2>节点包导出</h2>
+          <p className="muted compact">默认导出 10 条，可手动改成 11、20、30 或自定义数量。导出优先选择测试通过且延迟最低的节点。</p>
+        </div>
+      </div>
+      <form className="export-form" onSubmit={onSubmit}>
+        <label>
+          批次名称
+          <input value={form.name} onChange={(event) => setForm((value) => ({ ...value, name: event.target.value }))} />
+        </label>
+        <label>
+          导出数量
+          <input type="number" min="1" max="1000" value={form.count} onChange={(event) => setForm((value) => ({ ...value, count: Number(event.target.value) }))} />
+        </label>
+        <label>
+          最大延迟 ms
+          <input placeholder="例如 300" value={form.maxLatencyMs} onChange={(event) => setForm((value) => ({ ...value, maxLatencyMs: event.target.value }))} />
+        </label>
+        <label>
+          本期口令
+          <input type="password" value={form.passphrase} onChange={(event) => setForm((value) => ({ ...value, passphrase: event.target.value }))} required />
+        </label>
+        <label className="check-row">
+          <input type="checkbox" checked={form.publish} onChange={(event) => setForm((value) => ({ ...value, publish: event.target.checked }))} />
+          发布领取页
+        </label>
+        <button className="primary small" disabled={exporting}>
+          <FileArchive size={16} />
+          {exporting ? "生成中..." : "生成节点包"}
+        </button>
+      </form>
+      <BatchTable batches={batches} />
+    </section>
+  );
+}
+
+function ClaimPanel({ batches }: { batches: ExportBatch[] }) {
+  return (
+    <section className="panel">
+      <div className="panel-title">
+        <div>
+          <h2>领取页管理</h2>
+          <p className="muted compact">点击领取页可以直接打开公开页面。外部用户输入正确口令后才能下载加密 zip 节点包。</p>
+        </div>
+      </div>
+      <BatchTable batches={batches} claimOnly />
+    </section>
+  );
+}
+
+function StatsPanel({ stats }: { stats: BatchStat[] }) {
+  return (
+    <section className="panel">
+      <div className="panel-title"><h2>领取统计</h2><BarChart3 size={18} /></div>
+      <div className="table">
+        <div className="table-head stats-grid"><span>批次</span><span>访问</span><span>口令输入</span><span>正确</span><span>错误</span><span>下载</span><span>反馈</span></div>
+        {stats.map((item) => (
+          <div className="table-row stats-grid" key={item.id}>
+            <span>{item.batch_code}</span>
+            <span>{item.view_count ?? 0}</span>
+            <span>{item.passphrase_attempt_count ?? 0}</span>
+            <span>{item.passphrase_correct_count ?? 0}</span>
+            <span>{item.passphrase_wrong_count ?? 0}</span>
+            <span>{item.download_count ?? 0}</span>
+            <span>{item.feedback_count ?? 0}</span>
+          </div>
+        ))}
+        {!stats.length && <p className="muted">暂无统计数据。</p>}
+      </div>
+    </section>
+  );
+}
+
+function FeedbackPanel({ feedback }: { feedback: FeedbackItem[] }) {
+  return (
+    <section className="panel">
+      <div className="panel-title"><h2>反馈数据</h2><MessageSquare size={18} /></div>
+      <div className="table">
+        <div className="table-head feedback-grid"><span>批次</span><span>地区</span><span>运营商</span><span>设备</span><span>软件</span><span>可用</span><span>备注</span></div>
+        {feedback.map((item) => (
+          <div className="table-row feedback-grid" key={item.id}>
+            <span>{item.batch_code ?? "-"}</span>
+            <span>{item.region || "-"}</span>
+            <span>{item.carrier || "-"}</span>
+            <span>{item.device || "-"}</span>
+            <span>{item.client_app || "-"}</span>
+            <span>{item.is_usable === null || item.is_usable === undefined ? "-" : item.is_usable ? "是" : "否"}</span>
+            <span className="truncate">{item.note || "-"}</span>
+          </div>
+        ))}
+        {!feedback.length && <p className="muted">暂无反馈。</p>}
+      </div>
+    </section>
+  );
+}
+
+function SettingsPanel({ videoMode, onToggleVideoMode, summary }: { videoMode: boolean; onToggleVideoMode: () => void; summary: Summary | null }) {
+  return (
+    <section className="panel">
+      <div className="panel-title"><h2>系统设置</h2><Settings size={18} /></div>
+      <div className="settings-grid">
+        <div>
+          <strong>公开视频模式</strong>
+          <p className="muted compact">开启后隐藏管理员账号、完整节点、来源链接、Token、IP、UUID、密码等敏感信息。</p>
+        </div>
+        <button className={videoMode ? "primary small" : "icon"} onClick={onToggleVideoMode} type="button">
+          {videoMode ? "已开启" : "开启"}
+        </button>
+        <div>
+          <strong>系统状态</strong>
+          <p className="muted compact">{summary?.systemStatus ?? "running"} / v{summary?.version ?? "1.0.0"}</p>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function LogsPanel({ logs }: { logs: LogItem[] }) {
+  return (
+    <section className="panel">
+      <div className="panel-title"><h2>运行日志</h2><ScrollText size={18} /></div>
+      <div className="table">
+        <div className="table-head log-grid"><span>时间</span><span>级别</span><span>内容</span></div>
+        {logs.map((log, index) => (
+          <div className="table-row log-grid" key={`${log.created_at}-${index}`}>
+            <span>{formatDate(log.created_at)}</span>
+            <span>{log.level}</span>
+            <span className="truncate">{log.message}</span>
+          </div>
+        ))}
+        {!logs.length && <p className="muted">暂无运行日志。</p>}
+      </div>
+    </section>
   );
 }
 
@@ -424,7 +818,7 @@ function PublicClaimPage({ slug }: { slug: string }) {
       return;
     }
     setUnlocked(true);
-    setMessage("口令正确，可以下载节点包。");
+    setMessage("口令正确，可以下载节点包。zip 解压密码就是本期口令。");
   }
 
   async function submitFeedback(event: React.FormEvent) {
@@ -462,6 +856,7 @@ function PublicClaimPage({ slug }: { slug: string }) {
 
         {unlocked && (
           <a className="download-button" href={`/api/public/batches/${slug}/download${window.location.search}`}>
+            <Download size={18} />
             下载加密节点包
           </a>
         )}
@@ -490,7 +885,7 @@ function RunTable({ runs }: { runs: CollectionRun[] }) {
   return (
     <div className="table">
       <div className="table-head run-grid"><span>任务</span><span>状态</span><span>来源</span><span>原始</span><span>新增</span><span>错误</span></div>
-      {runs.slice(0, 6).map((run) => (
+      {runs.slice(0, 12).map((run) => (
         <div className="table-row run-grid" key={run.id}>
           <span>#{run.id}</span><span>{run.status}</span><span>{run.fetched_sources}/{run.discovered_sources}</span><span>{run.raw_nodes}</span><span>{run.inserted_nodes}</span><span>{run.error_count}</span>
         </div>
@@ -504,7 +899,7 @@ function TestRunTable({ runs }: { runs: TestRun[] }) {
   return (
     <div className="table">
       <div className="table-head run-grid"><span>任务</span><span>状态</span><span>测试</span><span>通过</span><span>失败</span><span>均值</span></div>
-      {runs.slice(0, 6).map((run) => (
+      {runs.slice(0, 12).map((run) => (
         <div className="table-row run-grid" key={run.id}>
           <span>#{run.id}</span><span>{run.status}</span><span>{run.tested_nodes}</span><span>{run.passed_nodes}</span><span>{run.failed_nodes}</span><span>{run.avg_latency_ms ? `${run.avg_latency_ms}ms` : "-"}</span>
         </div>
@@ -514,34 +909,58 @@ function TestRunTable({ runs }: { runs: TestRun[] }) {
   );
 }
 
-function BatchTable({ batches }: { batches: ExportBatch[] }) {
+function BatchTable({ batches, compact = false, claimOnly = false }: { batches: ExportBatch[]; compact?: boolean; claimOnly?: boolean }) {
   return (
     <div className="table spaced">
       <div className="table-head batch-grid"><span>批次</span><span>名称</span><span>状态</span><span>数量</span><span>领取页</span></div>
-      {batches.slice(0, 6).map((batch) => (
-        <div className="table-row batch-grid" key={batch.id}>
-          <span>{batch.batch_code}</span><span className="truncate">{batch.name}</span><span>{batch.status}</span><span>{batch.node_count}</span><span className="truncate">/p/{batch.public_slug}</span>
-        </div>
-      ))}
+      {batches.slice(0, compact ? 6 : 50).map((batch) => {
+        const claimUrl = `/p/${batch.public_slug}`;
+        return (
+          <div className="table-row batch-grid" key={batch.id}>
+            <span>{batch.batch_code}</span>
+            <span className="truncate">{batch.name}</span>
+            <span>{batch.status}</span>
+            <span>{batch.node_count}</span>
+            <span className="row-actions">
+              {batch.status === "published" || claimOnly ? (
+                <a className="text-link" href={claimUrl} target="_blank" rel="noreferrer">打开领取页</a>
+              ) : (
+                <span className="muted">未发布</span>
+              )}
+            </span>
+          </div>
+        );
+      })}
       {!batches.length && <p className="muted">暂无导出批次。</p>}
     </div>
   );
 }
 
-function NodePreview({ nodes }: { nodes: NodeItem[] }) {
+function NodePreview({ title, nodes }: { title: string; nodes: NodeItem[] }) {
   return (
     <section className="panel">
-      <div className="panel-title"><h2>节点池预览</h2><Activity size={18} /></div>
-      <div className="table">
-        <div className="table-head node-grid"><span>协议</span><span>状态</span><span>后台初筛延迟</span><span>来源</span><span>失败原因</span></div>
-        {nodes.map((node) => (
-          <div className="table-row node-grid" key={node.id}>
-            <span>{node.protocol}</span><span>{node.status}</span><span>{node.latency_ms ? `${node.latency_ms}ms` : "-"}</span><span>{node.source_type ?? "-"}</span><span className="truncate">{node.failure_reason ?? "-"}</span>
-          </div>
-        ))}
-        {!nodes.length && <p className="muted">暂无节点记录。</p>}
-      </div>
+      <div className="panel-title"><h2>{title}</h2><Activity size={18} /></div>
+      <NodeTable nodes={nodes} />
     </section>
+  );
+}
+
+function NodeTable({ nodes }: { nodes: NodeItem[] }) {
+  return (
+    <div className="table">
+      <div className="table-head node-grid"><span>协议</span><span>状态</span><span>后台初筛延迟</span><span>来源</span><span>最近测试</span><span>失败原因</span></div>
+      {nodes.map((node) => (
+        <div className="table-row node-grid" key={node.id}>
+          <span>{node.protocol}</span>
+          <span>{node.status}</span>
+          <span>{node.latency_ms ? `${node.latency_ms}ms` : "-"}</span>
+          <span>{node.source_type ?? "-"}</span>
+          <span>{formatDate(node.last_tested_at)}</span>
+          <span className="truncate">{node.failure_reason ?? "-"}</span>
+        </div>
+      ))}
+      {!nodes.length && <p className="muted">暂无节点记录。</p>}
+    </div>
   );
 }
 
@@ -551,7 +970,7 @@ function SourceCache({ sources, videoMode }: { sources: SourceItem[]; videoMode:
       <div className="panel-title"><h2>来源缓存</h2><GitBranch size={18} /></div>
       <div className="table">
         <div className="table-head source-grid"><span>类型</span><span>状态</span><span>成功</span><span>失败</span><span>来源 URL</span></div>
-        {sources.slice(0, 8).map((source) => (
+        {sources.slice(0, 20).map((source) => (
           <div className="table-row source-grid" key={source.id}>
             <span>{source.source_type}</span><span>{source.status}</span><span>{source.success_count}</span><span>{source.failure_count}</span><span className="truncate">{videoMode ? maskUrl(source.url) : source.url}</span>
           </div>
@@ -595,6 +1014,13 @@ function maskUrl(url: string) {
   } catch {
     return "已隐藏";
   }
+}
+
+function formatDate(value?: string | null) {
+  if (!value) return "-";
+  const time = new Date(value);
+  if (Number.isNaN(time.getTime())) return "-";
+  return time.toLocaleString();
 }
 
 ReactDOM.createRoot(document.getElementById("root")!).render(<App />);
