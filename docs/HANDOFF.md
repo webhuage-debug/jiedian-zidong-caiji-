@@ -23,6 +23,18 @@
 - 如果仍使用 HTTP 直连，确认 `.env` 中 `PUBLIC_BASE_URL=http://服务器IP:3000`，并设置或保留 `SESSION_COOKIE_SECURE=auto`。
 - 如果使用 HTTPS 域名，设置 `PUBLIC_BASE_URL=https://你的域名`。
 
+### Git 状态
+
+- 已提交：`fix: support http vps cookie sessions`
+- 已 push 到 GitHub 分支：`codex/v1.0.0-release`
+- 最新用途：给 VPS 更新部署，解决 HTTP 访问时 Cookie 不保存导致的登录/按钮无反应问题。
+
+### 给后续 AI 的备注
+
+- 用户会让 Claude 参与接手，请始终先读本文件最新章节。
+- 用户要求：关键阶段完成后必须及时更新交接日志并 push 到 GitHub。
+- 当前仓库本地配置了 Git 代理 `http://127.0.0.1:7897`，用于访问 GitHub。
+
 ## 2026-05-23 v1.0.0
 
 ### 本次开发时间
