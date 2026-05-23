@@ -5,8 +5,8 @@ import { execFileSync } from "node:child_process";
 const root = process.cwd();
 const forbiddenNames = [/^\.env$/, /\.sqlite3?$/i, /\.db$/i, /\.log$/i, /\.zip$/i];
 const forbiddenContent = [
-  /ADMIN_PASSWORD=(?!change-this-password-before-deploy)/,
-  /SESSION_SECRET=(?!replace-with-a-long-random-secret-at-least-32-chars)/,
+  /^ADMIN_PASSWORD=(?!change-this-password-before-deploy|['"]?替换|['"]?\$\{?[A-Z_]+|$).{8,}/m,
+  /^SESSION_SECRET=(?!replace-with-a-long-random-secret-at-least-32-chars|['"]?\$\{?[A-Z_]+|$).{16,}/m,
   /ghp_[A-Za-z0-9_]{20,}/,
   /github_pat_[A-Za-z0-9_]{20,}/,
   /(?:vmess|vless|trojan|ss|ssr|hysteria2|hy2|tuic):\/\/[A-Za-z0-9+/_?=#%&.:@;-]{20,}/i

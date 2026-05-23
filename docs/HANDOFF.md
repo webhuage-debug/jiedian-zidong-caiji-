@@ -16,6 +16,8 @@
 - 新增后台批次统计接口：`GET /api/stats/batches`。
 - 新增后台反馈数据接口：`GET /api/feedback`。
 - 新增发布检查清单 `docs/RELEASE_CHECKLIST.md`。
+- 新增 VPS 一键部署脚本 `scripts/deploy-vps.sh`。
+- `docs/DEPLOY.md` 和 `README.md` 已加入一键部署命令。
 - README 更新为 v1.0.0 正式版说明。
 
 ### 修改文件
@@ -31,6 +33,7 @@
 - 修改 `docs/HANDOFF.md`
 - 修改 `docs/TODO.md`
 - 新增 `docs/RELEASE_CHECKLIST.md`
+- 新增 `scripts/deploy-vps.sh`
 
 ### 删除文件
 
@@ -60,6 +63,7 @@
 ### 下一步建议
 
 - 在 VPS / Docker 环境执行 `docs/RELEASE_CHECKLIST.md`。
+- 一键部署优先使用 `scripts/deploy-vps.sh`；私有仓库场景需要通过 `GITHUB_TOKEN` 读取 raw 脚本和 clone 仓库。
 - 用户明确指令后，再统一 push GitHub。
 
 ### 敏感信息检查
@@ -77,6 +81,13 @@
 - `git push -u origin codex/v0.1.0-foundation codex/v0.2.0-collector codex/v0.3.0-testing codex/v0.4.0-export codex/v0.5.0-public-claim codex/v0.6.0-security-video codex/v1.0.0-release`
 - push 成功，GitHub 仓库：`https://github.com/webhuage-debug/jiandiancaiji.git`。
 - 本地为当前仓库配置了 Git 代理：`http.proxy` 和 `https.proxy` 均为 `http://127.0.0.1:7897`。
+
+### 备注
+
+- 用户要求后续 VPS 需要一键部署，已新增 `scripts/deploy-vps.sh`。
+- 推荐 VPS 一键部署命令见 `docs/DEPLOY.md` 的“VPS 一键部署”章节。
+- 部署脚本会安装 Docker、clone/update 仓库、生成 `.env`、执行 `docker compose up -d --build`。
+- 不要把 GitHub Token、真实 `.env`、节点包、数据库或日志提交到仓库。
 
 ## 2026-05-23 v0.6.0
 

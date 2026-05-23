@@ -1,5 +1,30 @@
 # Deploy
 
+## VPS 一键部署
+
+私有仓库推荐使用 GitHub fine-grained token 或 classic PAT，只授予该私有仓库读取权限。不要把 Token 写入 `.env`，不要提交到 GitHub。
+
+在 Ubuntu 22.04 / Ubuntu 24.04 / Debian 12 VPS 上执行：
+
+```bash
+export GITHUB_TOKEN='替换为只读 GitHub Token'
+export ADMIN_USERNAME='admin'
+export ADMIN_PASSWORD='替换为强密码'
+export PUBLIC_BASE_URL='http://你的服务器IP:3000'
+bash -c "$(curl -fsSL -H "Authorization: Bearer ${GITHUB_TOKEN}" https://raw.githubusercontent.com/webhuage-debug/jiandiancaiji/codex/v1.0.0-release/scripts/deploy-vps.sh)"
+```
+
+如果不设置 `ADMIN_PASSWORD`，脚本会自动生成一个随机密码并在终端输出一次。
+
+如果已经手动 clone 到 VPS：
+
+```bash
+cd /opt/public-node-admin
+sudo bash scripts/deploy-vps.sh
+```
+
+脚本会自动安装 Docker、clone 或更新仓库、生成 `.env`、执行 `docker compose up -d --build`。
+
 ## 支持系统
 
 - Ubuntu 22.04

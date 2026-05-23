@@ -8,6 +8,8 @@
 - 添加后台批次统计接口 `GET /api/stats/batches`。
 - 添加后台反馈数据接口 `GET /api/feedback`。
 - 添加 `docs/RELEASE_CHECKLIST.md`。
+- 添加 VPS 一键部署脚本 `scripts/deploy-vps.sh`。
+- README 和 DEPLOY 文档补充一键部署命令。
 
 ### Changed
 

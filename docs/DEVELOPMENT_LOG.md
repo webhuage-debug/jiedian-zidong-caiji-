@@ -262,3 +262,10 @@
 
 - 在 VPS 上执行 release checklist。
 - 验证无误后再按用户指令统一 push GitHub。
+
+### 追加备注
+
+- 用户要求补充 VPS 一键部署能力。
+- 已新增 `scripts/deploy-vps.sh`。
+- 已在 `README.md` 和 `docs/DEPLOY.md` 写入一键部署命令。
+- 私有仓库部署时推荐使用只读 GitHub Token，通过 `GITHUB_TOKEN` 环境变量传入，不写入 `.env`。

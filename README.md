@@ -64,6 +64,18 @@ Public Node Admin 是一个部署在 Debian / Ubuntu VPS 上的个人自用网�
 
 ## 快速启动
 
+VPS 一键部署：
+
+```bash
+export GITHUB_TOKEN='替换为只读 GitHub Token'
+export ADMIN_USERNAME='admin'
+export ADMIN_PASSWORD='替换为强密码'
+export PUBLIC_BASE_URL='http://你的服务器IP:3000'
+bash -c "$(curl -fsSL -H "Authorization: Bearer ${GITHUB_TOKEN}" https://raw.githubusercontent.com/webhuage-debug/jiandiancaiji/codex/v1.0.0-release/scripts/deploy-vps.sh)"
+```
+
+常规部署：
+
 ```bash
 git clone <private-repo-url>
 cd public-node-admin

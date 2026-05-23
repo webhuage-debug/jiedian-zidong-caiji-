@@ -24,6 +24,7 @@
 
 ## 必须在 VPS / Docker 环境验证
 
+- `sudo bash scripts/deploy-vps.sh`
 - `npm install`
 - `npm run typecheck`
 - `npm run build`
