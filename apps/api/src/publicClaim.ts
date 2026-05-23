@@ -8,6 +8,7 @@ import { config } from "./config.js";
 import { db } from "./db.js";
 
 const unlockCookiePrefix = "pna_claim_";
+const downloadBuckets = new Map<string, { count: number; resetAt: number }>();
 
 type BatchRow = {
   id: number;
@@ -69,6 +70,9 @@ export function registerPublicClaimRoutes(app: FastifyInstance) {
     }
     if (!isUnlocked(request, slug)) {
       return reply.code(401).send({ message: "请先输入正确口令。" });
+    }
+    if (!allowDownload(request, slug)) {
+      return reply.code(429).send({ message: "下载过于频繁，请稍后再试。" });
     }
     if (!isPackagePathAllowed(batch.package_path) || !fs.existsSync(batch.package_path)) {
       return reply.code(404).send({ message: "节点包不存在。" });
@@ -201,6 +205,21 @@ function recordPublicEvent(batchId: number, eventType: string, request: FastifyR
 
 function hashIp(ip: string) {
   return crypto.createHmac("sha256", config.SESSION_SECRET).update(ip).digest("hex");
+}
+
+function allowDownload(request: FastifyRequest, slug: string) {
+  const key = `${slug}:${hashIp(request.ip)}`;
+  const now = Date.now();
+  const existing = downloadBuckets.get(key);
+  if (!existing || existing.resetAt <= now) {
+    downloadBuckets.set(key, { count: 1, resetAt: now + 60_000 });
+    return true;
+  }
+  if (existing.count >= config.DOWNLOAD_RATE_LIMIT_PER_MINUTE) {
+    return false;
+  }
+  existing.count += 1;
+  return true;
 }
 
 function isPackagePathAllowed(packagePath: string) {

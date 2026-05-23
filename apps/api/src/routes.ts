@@ -3,10 +3,12 @@ import { requireAdmin } from "./auth.js";
 import { runCollection } from "./collector/collectionService.js";
 import { db } from "./db.js";
 import { createExportBatch, createExportSchema, listExportBatches } from "./exporter/exportService.js";
+import { maskUrl, redactSensitiveText } from "./security/redact.js";
+import { isPublicVideoModeEnabled, setSetting } from "./settings.js";
 import { runNodeTests } from "./tester/testService.js";
 
 export function registerApiRoutes(app: FastifyInstance) {
-  app.get("/health", async () => ({ ok: true, version: "0.5.0" }));
+  app.get("/health", async () => ({ ok: true, version: "0.6.0" }));
 
   app.get("/api/dashboard/summary", { preHandler: requireAdmin }, async () => {
     const nodeCounts = db
@@ -21,7 +23,7 @@ export function registerApiRoutes(app: FastifyInstance) {
     const recentTest = db.prepare("SELECT * FROM test_runs ORDER BY started_at DESC LIMIT 1").get() as Record<string, unknown> | undefined;
 
     return {
-      version: "0.5.0",
+      version: "0.6.0",
       systemStatus: "running",
       candidateNodes: countStatus(nodeCounts, "test_passed"),
       pendingNodes: countStatus(nodeCounts, "pending_test"),
@@ -78,6 +80,7 @@ export function registerApiRoutes(app: FastifyInstance) {
     }
 
     const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+    const videoMode = isPublicVideoModeEnabled();
     const items = db
       .prepare(
         `SELECT id, protocol, source_url, source_type, collected_at, last_tested_at,
@@ -87,23 +90,36 @@ export function registerApiRoutes(app: FastifyInstance) {
          ORDER BY CASE WHEN latency_ms IS NULL THEN 1 ELSE 0 END, latency_ms ASC, collected_at DESC
          LIMIT ? OFFSET ?`
       )
-      .all(...params, limit, offset);
+      .all(...params, limit, offset) as Array<Record<string, unknown>>;
     const total = db.prepare(`SELECT COUNT(*) AS count FROM nodes ${whereSql}`).get(...params) as { count: number };
 
-    return { items, total: total.count };
+    return {
+      items: items.map((item) => ({
+        ...item,
+        source_url: videoMode ? maskUrl(item.source_url) : item.source_url,
+        failure_reason: videoMode ? redactSensitiveText(item.failure_reason) : item.failure_reason
+      })),
+      total: total.count
+    };
   });
 
   app.get("/api/sources", { preHandler: requireAdmin }, async () => {
+    const videoMode = isPublicVideoModeEnabled();
+    const items = db
+      .prepare(
+        `SELECT id, url, source_type, status, success_count, failure_count,
+                last_checked_at, next_allowed_at, last_error, updated_at
+         FROM node_sources
+         ORDER BY updated_at DESC
+         LIMIT 200`
+      )
+      .all() as Array<Record<string, unknown>>;
     return {
-      items: db
-        .prepare(
-          `SELECT id, url, source_type, status, success_count, failure_count,
-                  last_checked_at, next_allowed_at, last_error, updated_at
-           FROM node_sources
-           ORDER BY updated_at DESC
-           LIMIT 200`
-        )
-        .all()
+      items: items.map((item) => ({
+        ...item,
+        url: videoMode ? maskUrl(item.url) : item.url,
+        last_error: videoMode ? redactSensitiveText(item.last_error) : item.last_error
+      }))
     };
   });
 
@@ -159,9 +175,24 @@ export function registerApiRoutes(app: FastifyInstance) {
   });
 
   app.get("/api/logs", { preHandler: requireAdmin }, async () => {
+    const videoMode = isPublicVideoModeEnabled();
+    const logs = db.prepare("SELECT level, message, created_at FROM app_logs ORDER BY id DESC LIMIT 50").all() as Array<Record<string, unknown>>;
     return {
-      items: db.prepare("SELECT level, message, created_at FROM app_logs ORDER BY id DESC LIMIT 50").all()
+      items: logs.map((log) => ({
+        ...log,
+        message: videoMode ? redactSensitiveText(log.message) : log.message
+      }))
     };
+  });
+
+  app.get("/api/settings/video-mode", { preHandler: requireAdmin }, async () => {
+    return { enabled: isPublicVideoModeEnabled() };
+  });
+
+  app.post("/api/settings/video-mode", { preHandler: requireAdmin }, async (request) => {
+    const body = (request.body ?? {}) as { enabled?: boolean };
+    setSetting("public_video_mode", body.enabled ? "true" : "false");
+    return { enabled: Boolean(body.enabled) };
   });
 }
 

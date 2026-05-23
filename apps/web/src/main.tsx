@@ -178,13 +178,14 @@ function Dashboard({ user, onLogout }: { user: { username: string }; onLogout: (
   });
 
   const refresh = React.useCallback(async () => {
-    const [summaryRes, sourcesRes, runsRes, testRunsRes, nodesRes, batchesRes] = await Promise.all([
+    const [summaryRes, sourcesRes, runsRes, testRunsRes, nodesRes, batchesRes, videoModeRes] = await Promise.all([
       fetch("/api/dashboard/summary"),
       fetch("/api/sources"),
       fetch("/api/collection-runs"),
       fetch("/api/test-runs"),
       fetch("/api/nodes?limit=8"),
-      fetch("/api/export-batches")
+      fetch("/api/export-batches"),
+      fetch("/api/settings/video-mode")
     ]);
     setSummary(await summaryRes.json());
     setSources((await sourcesRes.json()).items ?? []);
@@ -192,6 +193,7 @@ function Dashboard({ user, onLogout }: { user: { username: string }; onLogout: (
     setTestRuns((await testRunsRes.json()).items ?? []);
     setNodes((await nodesRes.json()).items ?? []);
     setBatches((await batchesRes.json()).items ?? []);
+    setVideoMode(Boolean((await videoModeRes.json()).enabled));
   }, []);
 
   React.useEffect(() => {
@@ -263,6 +265,17 @@ function Dashboard({ user, onLogout }: { user: { username: string }; onLogout: (
     await refresh();
   }
 
+  async function toggleVideoMode() {
+    const next = !videoMode;
+    setVideoMode(next);
+    await fetch("/api/settings/video-mode", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled: next })
+    });
+    await refresh();
+  }
+
   const displayUser = videoMode ? "已隐藏" : user.username;
 
   return (
@@ -277,10 +290,10 @@ function Dashboard({ user, onLogout }: { user: { username: string }; onLogout: (
         <header className="topbar">
           <div>
             <h1>首页仪表盘</h1>
-            <p>v0.5.0 领取页版：采集、测试、导出、公开领取和反馈统计。</p>
+            <p>v0.6.0 安全版：公开视频模式、敏感信息脱敏和下载限速。</p>
           </div>
           <div className="top-actions">
-            <button className={videoMode ? "icon active" : "icon"} onClick={() => setVideoMode((value) => !value)} title="公开视频模式">
+            <button className={videoMode ? "icon active" : "icon"} onClick={toggleVideoMode} title="公开视频模式">
               <Video size={18} />
               公开视频模式
             </button>

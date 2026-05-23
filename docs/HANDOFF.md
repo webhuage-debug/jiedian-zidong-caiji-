@@ -1,5 +1,90 @@
 # Handoff Log
 
+## 2026-05-23 v0.6.0
+
+### 本次开发时间
+
+- 2026-05-23 Asia/Shanghai
+
+### 本次开发目标
+
+- 完成公开视频模式、隐藏完整节点、隐藏管理员账号、隐藏 IP / UUID / 密码 / Token / 来源链接、日志脱敏、下载限速、采集限速完善、敏感文件检查、SECURITY.md 完善。
+
+### 已完成功能
+
+- 新增后端设置模块 `apps/api/src/settings.ts`。
+- 新增脱敏工具 `apps/api/src/security/redact.ts`。
+- 公开视频模式保存到 `app_settings.public_video_mode`。
+- 前端 公开视频模式 开关读写后端设置。
+- 公开视频模式下前端隐藏管理员账号。
+- 公开视频模式下节点池接口隐藏来源 URL，并脱敏失败原因。
+- 公开视频模式下来源缓存接口隐藏来源 URL，并脱敏错误信息。
+- 公开视频模式下日志接口脱敏节点链接、Token、UUID 和完整 IPv4。
+- 公开下载接口增加按批次和 IP 哈希的分钟级限速。
+- `.env.example` 新增 `DOWNLOAD_RATE_LIMIT_PER_MINUTE`。
+
+### 修改文件
+
+- 修改 `.env.example`
+- 修改 `package.json`
+- 修改 `apps/api/package.json`
+- 修改 `apps/api/src/config.ts`
+- 修改 `apps/api/src/publicClaim.ts`
+- 修改 `apps/api/src/routes.ts`
+- 修改 `apps/web/package.json`
+- 修改 `apps/web/src/main.tsx`
+- 修改 `README.md`
+- 修改 `docs/ARCHITECTURE.md`
+- 修改 `docs/CHANGELOG.md`
+- 修改 `docs/DEVELOPMENT_LOG.md`
+- 修改 `docs/HANDOFF.md`
+- 修改 `docs/SECURITY.md`
+- 修改 `docs/TODO.md`
+- 新增 `apps/api/src/settings.ts`
+- 新增 `apps/api/src/security/redact.ts`
+
+### 删除文件
+
+- 无
+
+### 运行测试
+
+- 已执行：`node scripts/check-sensitive.mjs`，使用 Codex bundled Node 路径执行。
+- 已执行：UTF-8 内容扫描，确认 `apps/api/src/routes.ts`、`apps/api/src/publicClaim.ts`、`apps/api/src/security/redact.ts`、`apps/api/src/settings.ts`、`apps/web/src/main.tsx`、`README.md`、`docs/HANDOFF.md`、`docs/SECURITY.md` 无替换字符和明显乱码片段。
+- 未执行：`npm install`，当前环境没有可用 `npm` 命令。
+- 未执行：`npm run typecheck`，当前环境没有可用 `npm` 命令。
+- 未执行：`npm run build`，当前环境没有可用 `npm` 命令。
+- 未执行：下载限速端到端验证，当前环境不是目标 Linux VPS，且缺少依赖安装。
+
+### 测试结果
+
+- 敏感文件检查通过：`Sensitive file check passed for 39 tracked or pending files.`
+- UTF-8 扫描通过：核心后端、前端和文档文件未发现替换字符或明显乱码片段。
+- 因本地环境缺少 `npm` 和 `docker`，依赖安装、类型检查、构建和下载限速端到端验证需在 VPS 或 Docker 环境继续验证。
+
+### 当前问题
+
+- 当前环境无法执行 npm/Docker 构建验证。
+- 当前环境无法解析 `github.com`。
+- 按用户要求，本阶段不主动 push GitHub。
+
+### 下一步建议
+
+- v1.0.0 做最终端到端整合、部署验证、文档校正和安全验收。
+
+### 敏感信息检查
+
+- 本阶段不包含真实 `.env`、Token、数据库、节点包、运行日志。
+- 公开视频模式和日志接口增加了基础脱敏，但仍建议 v1.0.0 做一次全页面录屏安全复查。
+
+### Git commit 信息
+
+- 本阶段提交信息：`feat: add v0.6.0 security video mode`
+
+### 是否已 push 到 GitHub
+
+- 未 push。用户明确要求：本地上传 GitHub 必须确认后或有明确指令后执行。本阶段只做本地 commit，等待用户后续统一推送指令。
+
 ## 2026-05-23 v0.5.0
 
 ### 本次开发时间

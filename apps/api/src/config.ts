@@ -26,7 +26,8 @@ const envSchema = z.object({
   COLLECT_MAX_BYTES: z.coerce.number().int().positive().default(1024 * 1024),
   PUBLIC_SOURCE_SEEDS: z.string().default(""),
   TEST_CONNECT_TIMEOUT_SECONDS: z.coerce.number().int().positive().max(30).default(5),
-  TEST_BATCH_SIZE: z.coerce.number().int().positive().max(1000).default(100)
+  TEST_BATCH_SIZE: z.coerce.number().int().positive().max(1000).default(100),
+  DOWNLOAD_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().positive().max(120).default(6)
 });
 
 const parsed = envSchema.parse(process.env);

@@ -123,3 +123,13 @@ v0.5.0 已实现：
 
 - 管理后台从 `collection_runs`、`test_runs`、`nodes`、`export_batches`、`batch_stats`、`feedback` 汇总仪表盘。
 - 公开视频模式启用时，前后端都需要隐藏完整节点、账号、来源链接、Token、IP、UUID、密码和服务器信息。
+
+## 安全与公开视频模式
+
+v0.6.0 已实现：
+
+- `apps/api/src/settings.ts`：保存和读取后端设置。
+- `apps/api/src/security/redact.ts`：敏感信息脱敏工具。
+- `apps/api/src/routes.ts`：节点池、来源缓存、日志接口按公开视频模式脱敏。
+- `apps/api/src/publicClaim.ts`：公开下载限速。
+- `apps/web/src/main.tsx`：公开视频模式开关读写后端设置。
