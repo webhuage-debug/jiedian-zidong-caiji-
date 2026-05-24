@@ -59,6 +59,38 @@ type TestRun = {
   avg_latency_ms?: number;
 };
 
+type XrayQueueStats = {
+  candidateTotal: number;
+  xrayChecked: number;
+  xrayUnchecked: number;
+  realPassed: number;
+  realFailed: number;
+  skipped: number;
+  avgRealLatencyMs?: number | null;
+  tierHigh?: number;
+  tierPremium?: number;
+  tierCommunity?: number;
+  tierBackup?: number;
+  lastTestedAt?: string | null;
+  runtime?: {
+    status: string;
+    currentBatch: number;
+    currentBatchSize: number;
+    processedThisRun: number;
+    message: string;
+    startedAt?: string | null;
+    updatedAt?: string | null;
+  };
+};
+
+type XrayOptions = {
+  mode: string;
+  limit: string;
+  protocol: string;
+  minLatencyMs: string;
+  maxLatencyMs: string;
+};
+
 type NodeItem = {
   id: number;
   protocol: string;
@@ -223,8 +255,11 @@ const navItems: Array<{ key: ViewKey; label: string; icon: React.ReactNode }> = 
 
 const statusText: Record<string, string> = {
   pending: "等待中",
+  idle: "未开始",
   pending_test: "待测试",
   running: "进行中",
+  paused: "已暂停",
+  stopped: "已停止",
   completed: "已完成",
   failed: "失败",
   test_passed: "测试通过",
@@ -430,6 +465,14 @@ function Dashboard({ user, onLogout }: { user: { username: string }; onLogout: (
   const [videoMode, setVideoMode] = React.useState(false);
   const [collecting, setCollecting] = React.useState(false);
   const [testing, setTesting] = React.useState(false);
+  const [xrayStats, setXrayStats] = React.useState<XrayQueueStats | null>(null);
+  const [xrayOptions, setXrayOptions] = React.useState<XrayOptions>({
+    mode: "untested",
+    limit: "50",
+    protocol: "",
+    minLatencyMs: "",
+    maxLatencyMs: ""
+  });
   const [exporting, setExporting] = React.useState(false);
   const [notice, setNotice] = React.useState("");
   const [nodeFilters, setNodeFilters] = React.useState({
@@ -479,6 +522,7 @@ function Dashboard({ user, onLogout }: { user: { username: string }; onLogout: (
       statsRes,
       channelStatsRes,
       feedbackRes,
+      xrayStatsRes,
       logsRes
     ] = await Promise.all([
       apiFetch("/api/dashboard/summary"),
@@ -492,6 +536,7 @@ function Dashboard({ user, onLogout }: { user: { username: string }; onLogout: (
       apiFetch("/api/stats/batches"),
       apiFetch("/api/stats/channels"),
       apiFetch("/api/feedback"),
+      apiFetch("/api/xray-test-runs/stats"),
       apiFetch("/api/logs")
     ]);
     setSummary(await summaryRes.json());
@@ -505,12 +550,26 @@ function Dashboard({ user, onLogout }: { user: { username: string }; onLogout: (
     setStats((await statsRes.json()).items ?? []);
     setChannelStats((await channelStatsRes.json()).items ?? []);
     setFeedback((await feedbackRes.json()).items ?? []);
+    setXrayStats(await xrayStatsRes.json());
     setLogs((await logsRes.json()).items ?? []);
   }, [nodeFilters]);
 
   React.useEffect(() => {
     refresh();
   }, [refresh]);
+
+  React.useEffect(() => {
+    if (!testing) return undefined;
+    const timer = window.setInterval(async () => {
+      try {
+        const res = await apiFetch("/api/xray-test-runs/stats");
+        setXrayStats(await res.json());
+      } catch {
+        // keep the running test quiet; the main request will surface errors
+      }
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, [testing]);
 
   async function logout() {
     await apiFetch("/api/auth/logout", { method: "POST" });
@@ -549,13 +608,21 @@ function Dashboard({ user, onLogout }: { user: { username: string }; onLogout: (
     await refresh();
   }
 
-  async function runXrayTester() {
+  async function runXrayTester(overrides: Partial<XrayOptions> = {}) {
+    const options = { ...xrayOptions, ...overrides };
     setTesting(true);
-    setNotice("Xray-core 真实检测已加入队列。默认低并发执行，只检测基础测试通过的候选节点。");
+    setNotice("Xray-core 正在进行全量真实检测。系统会每批检测 50 条，并以低并发持续运行，直到所有候选节点检测完成。");
     const res = await apiFetch("/api/xray-test-runs", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ limit: 50 })
+      body: JSON.stringify({
+        mode: options.mode,
+        limit: Number(options.limit || 50),
+        protocol: options.protocol || undefined,
+        minLatencyMs: options.minLatencyMs ? Number(options.minLatencyMs) : undefined,
+        maxLatencyMs: options.maxLatencyMs ? Number(options.maxLatencyMs) : undefined,
+        includeRecentFailures: options.mode === "failed"
+      })
     });
     const data = await res.json();
     setTesting(false);
@@ -566,8 +633,20 @@ function Dashboard({ user, onLogout }: { user: { username: string }; onLogout: (
     if (!data.summary.configured) {
       setNotice("Xray-core 未启用或未配置路径，本次只记录跳过状态，没有启动临时代理。");
     } else {
-      setNotice(`Xray-core 检测完成：检测 ${data.summary.checkedNodes} 条，真实可用 ${data.summary.realPassedNodes} 条。`);
+      setNotice(`Xray-core 全量真实检测完成：候选 ${data.summary.queueAfter.candidateTotal} 条，已检测 ${data.summary.queueAfter.xrayChecked} 条，真实可用 ${data.summary.queueAfter.realPassed} 条，真实失败 ${data.summary.queueAfter.realFailed} 条。`);
     }
+    await refresh();
+  }
+
+  async function pauseXrayTester() {
+    await apiFetch("/api/xray-test-runs/pause", { method: "POST" });
+    setNotice("Xray-core 检测已请求暂停。当前批次完成后暂停，已完成结果已保存。");
+    await refresh();
+  }
+
+  async function stopXrayTester() {
+    await apiFetch("/api/xray-test-runs/stop", { method: "POST" });
+    setNotice("Xray-core 检测已请求停止。当前批次完成后停止，并清理临时进程。");
     await refresh();
   }
 
@@ -755,7 +834,17 @@ function Dashboard({ user, onLogout }: { user: { username: string }; onLogout: (
         )}
 
         {activeView === "tests" && (
-          <TestPanel runs={testRuns} testing={testing} onRun={runTester} onRunXray={runXrayTester} />
+          <TestPanel
+            runs={testRuns}
+            testing={testing}
+            xrayStats={xrayStats}
+            xrayOptions={xrayOptions}
+            setXrayOptions={setXrayOptions}
+            onRun={runTester}
+            onRunXray={runXrayTester}
+            onPauseXray={pauseXrayTester}
+            onStopXray={stopXrayTester}
+          />
         )}
 
         {activeView === "failed" && (
@@ -901,7 +990,28 @@ function CollectionPanel({
   );
 }
 
-function TestPanel({ runs, testing, onRun, onRunXray }: { runs: TestRun[]; testing: boolean; onRun: () => void; onRunXray: () => void }) {
+function TestPanel({
+  runs,
+  testing,
+  xrayStats,
+  xrayOptions,
+  setXrayOptions,
+  onRun,
+  onRunXray,
+  onPauseXray,
+  onStopXray
+}: {
+  runs: TestRun[];
+  testing: boolean;
+  xrayStats: XrayQueueStats | null;
+  xrayOptions: XrayOptions;
+  setXrayOptions: React.Dispatch<React.SetStateAction<XrayOptions>>;
+  onRun: () => void;
+  onRunXray: (overrides?: Partial<XrayOptions>) => void;
+  onPauseXray: () => void;
+  onStopXray: () => void;
+}) {
+  const usableRate = xrayStats?.xrayChecked ? Math.round((xrayStats.realPassed / xrayStats.xrayChecked) * 1000) / 10 : 0;
   return (
     <section className="panel">
       <div className="panel-title">
@@ -914,13 +1024,80 @@ function TestPanel({ runs, testing, onRun, onRunXray }: { runs: TestRun[]; testi
             <Activity size={16} />
             {testing ? "测试中..." : "开始基础测试"}
           </button>
-          <button className="icon" onClick={onRunXray} disabled={testing}>
+          <button className="icon" onClick={() => onRunXray()} disabled={testing}>
             <Activity size={16} />
             Xray 真实检测
           </button>
         </div>
       </div>
-      <div className="notice">Xray-core 真实检测默认关闭，必须在 VPS 配置内核路径后才会执行。临时代理只允许监听 127.0.0.1，低并发运行。</div>
+      <div className="notice">Xray-core 正在按队列做全量真实检测：每批默认 50 条，低并发持续运行，直到未检测候选节点全部完成。临时代理只允许监听 127.0.0.1。</div>
+      <div className="metric-grid compact">
+        <article><span>候选节点总数</span><strong>{xrayStats?.candidateTotal ?? 0}</strong></article>
+        <article><span>已真实检测</span><strong>{xrayStats?.xrayChecked ?? 0}</strong></article>
+        <article><span>未真实检测</span><strong>{xrayStats?.xrayUnchecked ?? 0}</strong></article>
+        <article><span>真实可用</span><strong>{xrayStats?.realPassed ?? 0}</strong></article>
+        <article><span>真实失败</span><strong>{xrayStats?.realFailed ?? 0}</strong></article>
+        <article><span>真实可用率</span><strong>{usableRate}%</strong></article>
+        <article><span>平均真实延迟</span><strong>{xrayStats?.avgRealLatencyMs ? `${xrayStats.avgRealLatencyMs}ms` : "-"}</strong></article>
+        <article><span>队列状态</span><strong>{zhStatus(xrayStats?.runtime?.status)}</strong></article>
+      </div>
+      <div className="metric-grid compact">
+        <article><span>0-100ms</span><strong>{xrayStats?.tierHigh ?? 0}</strong></article>
+        <article><span>100-200ms</span><strong>{xrayStats?.tierPremium ?? 0}</strong></article>
+        <article><span>200-300ms</span><strong>{xrayStats?.tierCommunity ?? 0}</strong></article>
+        <article><span>300ms 以上</span><strong>{xrayStats?.tierBackup ?? 0}</strong></article>
+        <article><span>当前批次</span><strong>第 {xrayStats?.runtime?.currentBatch ?? 0} 批</strong></article>
+        <article><span>当前批次数量</span><strong>{xrayStats?.runtime?.currentBatchSize ?? 0}</strong></article>
+        <article><span>本轮已处理</span><strong>{xrayStats?.runtime?.processedThisRun ?? 0}</strong></article>
+        <article><span>最后检测时间</span><strong>{xrayStats?.lastTestedAt ? formatTime(xrayStats.lastTestedAt) : "-"}</strong></article>
+      </div>
+      <div className="filter-form">
+        <label>
+          检测范围
+          <select value={xrayOptions.mode} onChange={(event) => setXrayOptions((value) => ({ ...value, mode: event.target.value }))}>
+            <option value="untested">只检测未做过 Xray 的节点</option>
+            <option value="all">检测全部未检测候选节点</option>
+            <option value="failed">重新检测失败节点</option>
+            <option value="range">按延迟区间检测</option>
+            <option value="current">检测当前候选批次</option>
+          </select>
+        </label>
+        <label>
+          每批检测数量
+          <select value={xrayOptions.limit} onChange={(event) => setXrayOptions((value) => ({ ...value, limit: event.target.value }))}>
+            <option value="50">50</option>
+            <option value="100">100</option>
+            <option value="200">200</option>
+          </select>
+        </label>
+        <label>
+          协议
+          <select value={xrayOptions.protocol} onChange={(event) => setXrayOptions((value) => ({ ...value, protocol: event.target.value }))}>
+            <option value="">全部</option>
+            <option value="vless">VLESS</option>
+            <option value="vmess">VMess</option>
+            <option value="trojan">Trojan</option>
+            <option value="ss">Shadowsocks</option>
+          </select>
+        </label>
+        <label>
+          最小延迟
+          <input value={xrayOptions.minLatencyMs} onChange={(event) => setXrayOptions((value) => ({ ...value, minLatencyMs: event.target.value }))} placeholder="例如 0" />
+        </label>
+        <label>
+          最大延迟
+          <input value={xrayOptions.maxLatencyMs} onChange={(event) => setXrayOptions((value) => ({ ...value, maxLatencyMs: event.target.value }))} placeholder="例如 300" />
+        </label>
+      </div>
+      <div className="row-actions">
+        <button className="primary small" onClick={() => onRunXray({ mode: "untested", limit: "50" })} disabled={testing}>
+          <Activity size={16} />
+          {testing ? "检测中..." : "开始全量真实检测"}
+        </button>
+        <button className="icon" onClick={onPauseXray}>暂停检测</button>
+        <button className="icon" onClick={() => onRunXray({ mode: "untested", limit: "50" })} disabled={testing}>继续检测</button>
+        <button className="icon" onClick={onStopXray}>停止检测</button>
+      </div>
       <TestRunTable runs={runs} />
     </section>
   );

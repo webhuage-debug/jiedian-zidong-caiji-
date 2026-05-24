@@ -21,12 +21,53 @@ type XraySummary = {
   skippedNodes: number;
   avgRealLatencyMs: number | null;
   configured: boolean;
+  mode: XrayRunMode;
+  limit: number;
+  queueBefore: XrayQueueStats;
+  queueAfter: XrayQueueStats;
 };
 
 type NodeRow = {
   id: number;
   protocol: string;
   content: string;
+};
+
+export type XrayRunMode = "untested" | "current" | "all" | "failed" | "range";
+
+export type XrayRunOptions = {
+  limit?: number;
+  mode?: XrayRunMode;
+  protocol?: string;
+  minLatencyMs?: number;
+  maxLatencyMs?: number;
+  includePassed?: boolean;
+  includeRecentFailures?: boolean;
+};
+
+export type XrayQueueStats = {
+  candidateTotal: number;
+  xrayChecked: number;
+  xrayUnchecked: number;
+  realPassed: number;
+  realFailed: number;
+  skipped: number;
+  avgRealLatencyMs: number | null;
+  tierHigh: number;
+  tierPremium: number;
+  tierCommunity: number;
+  tierBackup: number;
+  lastTestedAt: string | null;
+};
+
+export type XrayQueueRuntime = {
+  status: "idle" | "running" | "paused" | "completed" | "stopped" | "failed";
+  currentBatch: number;
+  currentBatchSize: number;
+  processedThisRun: number;
+  message: string;
+  startedAt: string | null;
+  updatedAt: string | null;
 };
 
 type ProbeResult = {
@@ -52,8 +93,19 @@ type VmessConfig = {
 };
 
 let activeRun: Promise<XraySummary> | null = null;
+const queueRuntime: XrayQueueRuntime & { pauseRequested: boolean; stopRequested: boolean } = {
+  status: "idle",
+  currentBatch: 0,
+  currentBatchSize: 0,
+  processedThisRun: 0,
+  message: "未开始",
+  startedAt: null,
+  updatedAt: null,
+  pauseRequested: false,
+  stopRequested: false
+};
 
-export async function runXrayRealTests(options?: { limit?: number }) {
+export async function runXrayRealTests(options?: XrayRunOptions) {
   if (activeRun) return activeRun;
   activeRun = runXrayRealTestsInternal(options).finally(() => {
     activeRun = null;
@@ -61,25 +113,101 @@ export async function runXrayRealTests(options?: { limit?: number }) {
   return activeRun;
 }
 
-async function runXrayRealTestsInternal(options?: { limit?: number }): Promise<XraySummary> {
-  const limit = Math.max(1, Math.min(options?.limit ?? 50, 200));
+export function getXrayQueueStats(): XrayQueueStats {
+  const row = db
+    .prepare(
+      `SELECT
+         COUNT(*) AS candidateTotal,
+         SUM(CASE WHEN real_tested_at IS NOT NULL AND real_status != 'xray_not_configured' THEN 1 ELSE 0 END) AS xrayChecked,
+         SUM(CASE WHEN real_tested_at IS NULL OR real_status = 'xray_not_configured' THEN 1 ELSE 0 END) AS xrayUnchecked,
+         SUM(CASE WHEN real_status = 'real_passed' THEN 1 ELSE 0 END) AS realPassed,
+         SUM(CASE WHEN real_status = 'real_failed' THEN 1 ELSE 0 END) AS realFailed,
+         SUM(CASE WHEN real_status LIKE 'xray_%' THEN 1 ELSE 0 END) AS skipped,
+         AVG(CASE WHEN real_status = 'real_passed' THEN real_latency_ms ELSE NULL END) AS avgRealLatencyMs,
+         SUM(CASE WHEN real_status = 'real_passed' AND real_latency_ms <= 100 THEN 1 ELSE 0 END) AS tierHigh,
+         SUM(CASE WHEN real_status = 'real_passed' AND real_latency_ms > 100 AND real_latency_ms <= 200 THEN 1 ELSE 0 END) AS tierPremium,
+         SUM(CASE WHEN real_status = 'real_passed' AND real_latency_ms > 200 AND real_latency_ms <= 300 THEN 1 ELSE 0 END) AS tierCommunity,
+         SUM(CASE WHEN real_status = 'real_passed' AND real_latency_ms > 300 THEN 1 ELSE 0 END) AS tierBackup,
+         MAX(real_tested_at) AS lastTestedAt
+       FROM nodes
+       WHERE status = 'test_passed'`
+    )
+    .get() as {
+    candidateTotal: number | null;
+    xrayChecked: number | null;
+    xrayUnchecked: number | null;
+    realPassed: number | null;
+    realFailed: number | null;
+    skipped: number | null;
+    avgRealLatencyMs: number | null;
+    tierHigh: number | null;
+    tierPremium: number | null;
+    tierCommunity: number | null;
+    tierBackup: number | null;
+    lastTestedAt: string | null;
+  };
+
+  return {
+    candidateTotal: Number(row.candidateTotal ?? 0),
+    xrayChecked: Number(row.xrayChecked ?? 0),
+    xrayUnchecked: Number(row.xrayUnchecked ?? 0),
+    realPassed: Number(row.realPassed ?? 0),
+    realFailed: Number(row.realFailed ?? 0),
+    skipped: Number(row.skipped ?? 0),
+    avgRealLatencyMs: row.avgRealLatencyMs === null ? null : Math.round(Number(row.avgRealLatencyMs)),
+    tierHigh: Number(row.tierHigh ?? 0),
+    tierPremium: Number(row.tierPremium ?? 0),
+    tierCommunity: Number(row.tierCommunity ?? 0),
+    tierBackup: Number(row.tierBackup ?? 0),
+    lastTestedAt: row.lastTestedAt ?? null
+  };
+}
+
+export function getXrayQueueRuntime() {
+  const { pauseRequested, stopRequested, ...runtime } = queueRuntime;
+  return runtime;
+}
+
+export function pauseXrayQueue() {
+  if (queueRuntime.status === "running") {
+    queueRuntime.pauseRequested = true;
+    queueRuntime.message = "已请求暂停，当前批次完成后暂停";
+    queueRuntime.updatedAt = new Date().toISOString();
+  }
+  return getXrayQueueRuntime();
+}
+
+export function stopXrayQueue() {
+  if (queueRuntime.status === "running" || queueRuntime.status === "paused") {
+    queueRuntime.stopRequested = true;
+    queueRuntime.pauseRequested = false;
+    queueRuntime.status = queueRuntime.status === "paused" ? "stopped" : queueRuntime.status;
+    queueRuntime.message = "已请求停止，当前批次完成后停止";
+    queueRuntime.updatedAt = new Date().toISOString();
+  }
+  return getXrayQueueRuntime();
+}
+
+async function runXrayRealTestsInternal(options?: XrayRunOptions): Promise<XraySummary> {
+  const mode = normalizeMode(options?.mode);
+  const batchSize = Math.min(normalizeLimit(options?.limit), 200);
   const startedAt = new Date().toISOString();
+  const queueBefore = getXrayQueueStats();
+  queueRuntime.status = "running";
+  queueRuntime.currentBatch = 0;
+  queueRuntime.currentBatchSize = 0;
+  queueRuntime.processedThisRun = 0;
+  queueRuntime.message = "Xray-core 正在进行全量真实检测";
+  queueRuntime.startedAt = startedAt;
+  queueRuntime.updatedAt = startedAt;
+  queueRuntime.pauseRequested = false;
+  queueRuntime.stopRequested = false;
   const runResult = db
     .prepare("INSERT INTO test_runs (status, started_at, test_method) VALUES ('running', ?, 'xray-core')")
     .run(startedAt);
   const runId = Number(runResult.lastInsertRowid);
 
   const configured = await isXrayConfigured();
-  const nodes = db
-    .prepare(
-      `SELECT id, protocol, content
-       FROM nodes
-       WHERE status = 'test_passed'
-       ORDER BY COALESCE(real_tested_at, last_tested_at, collected_at) ASC
-       LIMIT ?`
-    )
-    .all(limit) as NodeRow[];
-
   let realPassedNodes = 0;
   let failedNodes = 0;
   let skippedNodes = 0;
@@ -87,43 +215,84 @@ async function runXrayRealTestsInternal(options?: { limit?: number }): Promise<X
 
   const binaryProbe = configured ? await probeXrayBinary() : { ok: false, reason: "xray_not_configured" };
 
-  await runWithConcurrency(nodes, config.XRAY_REAL_TEST_CONCURRENCY, async (node) => {
-    if (!configured) {
-      skippedNodes += 1;
-      recordXrayResult(runId, node.id, "xray_not_configured", null, "xray_not_configured");
-      return;
+  while (!queueRuntime.stopRequested) {
+    const nodes = selectXrayQueueNodes({ ...options, mode }, batchSize);
+    if (!nodes.length) {
+      queueRuntime.status = "completed";
+      queueRuntime.message = "Xray-core 全量真实检测完成";
+      break;
     }
-    if (!binaryProbe.ok) {
+
+    queueRuntime.currentBatch += 1;
+    queueRuntime.currentBatchSize = nodes.length;
+    queueRuntime.updatedAt = new Date().toISOString();
+
+    await runWithConcurrency(nodes, config.XRAY_REAL_TEST_CONCURRENCY, async (node) => {
+      if (!configured) {
+        skippedNodes += 1;
+        recordXrayResult(runId, node.id, "xray_not_configured", null, "xray_not_configured");
+        return;
+      }
+      if (!binaryProbe.ok) {
+        failedNodes += 1;
+        recordXrayResult(runId, node.id, "real_failed", null, binaryProbe.reason ?? "xray_probe_failed");
+        return;
+      }
+      if (!supportedProtocols.has(node.protocol)) {
+        skippedNodes += 1;
+        recordXrayResult(runId, node.id, "xray_unsupported_protocol", null, "unsupported_protocol");
+        return;
+      }
+
+      const result = await testNodeWithXray(node);
+      if (result.ok && result.latencyMs !== null) {
+        realPassedNodes += 1;
+        latencies.push(result.latencyMs);
+        recordXrayResult(runId, node.id, "real_passed", result.latencyMs, null);
+        return;
+      }
+
       failedNodes += 1;
-      recordXrayResult(runId, node.id, "real_failed", null, binaryProbe.reason ?? "xray_probe_failed");
-      return;
-    }
-    if (!supportedProtocols.has(node.protocol)) {
-      skippedNodes += 1;
-      recordXrayResult(runId, node.id, "xray_unsupported_protocol", null, "unsupported_protocol");
-      return;
-    }
+      recordXrayResult(runId, node.id, "real_failed", null, result.reason ?? "proxy_failed");
+    });
 
-    const result = await testNodeWithXray(node);
-    if (result.ok && result.latencyMs !== null) {
-      realPassedNodes += 1;
-      latencies.push(result.latencyMs);
-      recordXrayResult(runId, node.id, "real_passed", result.latencyMs, null);
-      return;
-    }
+    queueRuntime.processedThisRun += nodes.length;
+    queueRuntime.updatedAt = new Date().toISOString();
 
-    failedNodes += 1;
-    recordXrayResult(runId, node.id, "real_failed", null, result.reason ?? "proxy_failed");
-  });
+    if (queueRuntime.pauseRequested) {
+      queueRuntime.status = "paused";
+      queueRuntime.message = "Xray-core 检测已暂停，已完成结果已保存";
+      break;
+    }
+    if (!configured || !binaryProbe.ok) {
+      queueRuntime.status = "completed";
+      queueRuntime.message = configured ? "Xray-core 启动检查失败，本轮已停止" : "Xray-core 未配置，本轮已停止";
+      break;
+    }
+    if (mode === "current" || mode === "failed") {
+      queueRuntime.status = "completed";
+      queueRuntime.message = "Xray-core 当前批次检测完成";
+      break;
+    }
+  }
+
+  if (queueRuntime.stopRequested) {
+    queueRuntime.status = "stopped";
+    queueRuntime.message = "Xray-core 检测已停止，已完成结果已保存";
+  }
 
   const summary: XraySummary = {
     runId,
-    checkedNodes: nodes.length,
+    checkedNodes: queueRuntime.processedThisRun,
     realPassedNodes,
     failedNodes,
     skippedNodes,
     avgRealLatencyMs: latencies.length ? Math.round(latencies.reduce((sum, value) => sum + value, 0) / latencies.length) : null,
-    configured
+    configured,
+    mode,
+    limit: batchSize,
+    queueBefore,
+    queueAfter: getXrayQueueStats()
   };
 
   db.prepare(
@@ -131,9 +300,76 @@ async function runXrayRealTestsInternal(options?: { limit?: number }): Promise<X
      SET status = 'completed', finished_at = ?, tested_nodes = ?, passed_nodes = ?, failed_nodes = ?,
          removed_nodes = 0, avg_latency_ms = ?, summary_json = ?
      WHERE id = ?`
-  ).run(new Date().toISOString(), nodes.length, realPassedNodes, failedNodes, summary.avgRealLatencyMs, JSON.stringify(summary), runId);
+  ).run(new Date().toISOString(), summary.checkedNodes, realPassedNodes, failedNodes, summary.avgRealLatencyMs, JSON.stringify(summary), runId);
 
   return summary;
+}
+
+function selectXrayQueueNodes(options: XrayRunOptions, limit: number) {
+  const mode = normalizeMode(options.mode);
+  const where = ["status = 'test_passed'", "protocol IN ('vless', 'vmess', 'trojan', 'ss')"];
+  const params: unknown[] = [];
+  const recentFailureCutoff = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
+
+  if (options.protocol && supportedProtocols.has(options.protocol)) {
+    where.push("protocol = ?");
+    params.push(options.protocol);
+  }
+  if (typeof options.minLatencyMs === "number" && Number.isFinite(options.minLatencyMs)) {
+    where.push("COALESCE(real_latency_ms, latency_ms) >= ?");
+    params.push(options.minLatencyMs);
+  }
+  if (typeof options.maxLatencyMs === "number" && Number.isFinite(options.maxLatencyMs)) {
+    where.push("COALESCE(real_latency_ms, latency_ms) <= ?");
+    params.push(options.maxLatencyMs);
+  }
+
+  if (mode === "failed") {
+    where.push("real_status = 'real_failed'");
+    if (!options.includeRecentFailures) {
+      where.push("(real_tested_at IS NULL OR real_tested_at <= ?)");
+      params.push(recentFailureCutoff);
+    }
+  } else if (mode === "current") {
+    if (!options.includePassed) where.push("(real_status IS NULL OR real_status != 'real_passed')");
+  } else {
+    if (mode === "untested" || mode === "all" || mode === "range") {
+      where.push("(real_tested_at IS NULL OR real_status = 'xray_not_configured')");
+    }
+    if (!options.includePassed) where.push("(real_status IS NULL OR real_status != 'real_passed')");
+    if (!options.includeRecentFailures) {
+      where.push("(real_status IS NULL OR real_status != 'real_failed' OR real_tested_at <= ?)");
+      params.push(recentFailureCutoff);
+    }
+  }
+
+  return db
+    .prepare(
+      `SELECT id, protocol, content
+       FROM nodes
+       WHERE ${where.join(" AND ")}
+       ORDER BY
+         CASE
+           WHEN real_tested_at IS NULL OR real_status = 'xray_not_configured' THEN 0
+           WHEN real_status = 'real_failed' THEN 1
+           ELSE 2
+         END,
+         CASE WHEN real_latency_ms IS NULL THEN 1 ELSE 0 END,
+         COALESCE(real_latency_ms, latency_ms, 999999) ASC,
+         COALESCE(real_tested_at, last_tested_at, collected_at) ASC
+       LIMIT ?`
+    )
+    .all(...params, limit) as NodeRow[];
+}
+
+function normalizeLimit(value?: number) {
+  if (!Number.isFinite(value)) return 50;
+  return Math.max(1, Math.min(Number(value), 5000));
+}
+
+function normalizeMode(value?: string): XrayRunMode {
+  if (value === "current" || value === "all" || value === "failed" || value === "range") return value;
+  return "untested";
 }
 
 async function isXrayConfigured() {

@@ -354,6 +354,34 @@ textarea {
   letter-spacing: 0;
 }
 
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin: 14px 0;
+}
+
+.metric-grid article {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #f9fbfc;
+  padding: 14px;
+}
+
+.metric-grid span {
+  display: block;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.metric-grid strong {
+  display: block;
+  margin-top: 7px;
+  font-size: 20px;
+  letter-spacing: 0;
+}
+
 .panel {
   padding: 22px;
   margin-bottom: 18px;
@@ -609,6 +637,7 @@ textarea {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .metric-grid,
   .run-grid,
   .source-grid,
   .node-grid,

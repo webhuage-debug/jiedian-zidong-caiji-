@@ -9,7 +9,7 @@ import { closeExportBatch, createExportBatch, createExportSchema, deleteDraftBat
 import { maskUrl, redactSensitiveText } from "./security/redact.js";
 import { isPublicVideoModeEnabled, setSetting } from "./settings.js";
 import { runNodeTests } from "./tester/testService.js";
-import { runXrayRealTests } from "./tester/xrayService.js";
+import { getXrayQueueRuntime, getXrayQueueStats, pauseXrayQueue, runXrayRealTests, stopXrayQueue, type XrayRunMode } from "./tester/xrayService.js";
 
 export function registerApiRoutes(app: FastifyInstance) {
   app.get("/health", async () => ({ ok: true, version: "1.0.0" }));
@@ -157,13 +157,41 @@ export function registerApiRoutes(app: FastifyInstance) {
 
   app.post("/api/xray-test-runs", { preHandler: requireAdmin }, async (request, reply) => {
     try {
-      const body = (request.body ?? {}) as { limit?: number };
-      const summary = await runXrayRealTests({ limit: clampNumber(Number(body.limit ?? 50), 1, 200) });
+      const body = (request.body ?? {}) as {
+        limit?: number;
+        mode?: XrayRunMode;
+        protocol?: string;
+        minLatencyMs?: number;
+        maxLatencyMs?: number;
+        includePassed?: boolean;
+        includeRecentFailures?: boolean;
+      };
+      const summary = await runXrayRealTests({
+        limit: clampNumber(Number(body.limit ?? 50), 1, 5000),
+        mode: body.mode,
+        protocol: body.protocol,
+        minLatencyMs: body.minLatencyMs === undefined ? undefined : Number(body.minLatencyMs),
+        maxLatencyMs: body.maxLatencyMs === undefined ? undefined : Number(body.maxLatencyMs),
+        includePassed: Boolean(body.includePassed),
+        includeRecentFailures: Boolean(body.includeRecentFailures)
+      });
       return { ok: true, summary };
     } catch (error) {
       const message = error instanceof Error ? error.message : "xray real test failed";
       return reply.code(500).send({ ok: false, message });
     }
+  });
+
+  app.get("/api/xray-test-runs/stats", { preHandler: requireAdmin }, async () => {
+    return { ...getXrayQueueStats(), runtime: getXrayQueueRuntime() };
+  });
+
+  app.post("/api/xray-test-runs/pause", { preHandler: requireAdmin }, async () => {
+    return { ok: true, runtime: pauseXrayQueue() };
+  });
+
+  app.post("/api/xray-test-runs/stop", { preHandler: requireAdmin }, async () => {
+    return { ok: true, runtime: stopXrayQueue() };
   });
 
   app.get("/api/export-batches", { preHandler: requireAdmin }, async () => {
