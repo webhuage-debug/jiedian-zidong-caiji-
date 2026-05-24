@@ -304,3 +304,25 @@
 ## 后续建议
 - 在 VPS 执行 `git pull --ff-only origin codex/v1.0.0-release && docker compose up -d --build` 后验证采集、测试、节点包和领取页。
 - 后续单独开发 Xray-core 二级真实代理检测，不要混入本次 UI 修复。
+
+# 2026-05-24 修复节点包 Windows 解压文件名乱码
+
+## 开发工具或 AI
+- Codex
+
+## 本次任务
+- 修复节点包在 Windows 解压后中文文件名乱码的问题。
+- 修复导出说明模板中文内容被编码污染的问题。
+
+## 实现思路
+- 不依赖 zip 工具对中文文件名编码的兼容性。
+- 将压缩包内部文件名改为 ASCII，保证 Windows、macOS、Linux、安卓解压都稳定。
+- 保留说明文件中文内容，使用 UTF-8 写入。
+
+## 修改内容
+- `apps/api/src/exporter/exportService.ts`：重写导出服务文件名和说明模板。
+- `docs/HANDOFF.md`：追加本次修复记录。
+
+## 后续建议
+- VPS 更新后重新生成节点包；旧节点包不会自动变化。
+- 检查 `nodes.txt` 是否仍为纯节点内容。

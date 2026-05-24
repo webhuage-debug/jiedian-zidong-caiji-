@@ -45,11 +45,11 @@ export async function createExportBatch(input: CreateExportInput) {
   const batchDir = path.join(config.EXPORT_DIR, batchCode);
   fs.mkdirSync(batchDir, { recursive: true });
 
-  const textFile = path.join(batchDir, "候选节点.txt");
-  const guideFile = path.join(batchDir, "v2rayN导入说明.txt");
-  const usageFile = path.join(batchDir, "使用说明.txt");
-  const disclaimerFile = path.join(batchDir, "免责声明.txt");
-  const feedbackFile = path.join(batchDir, "反馈模板.txt");
+  const textFile = path.join(batchDir, "nodes.txt");
+  const guideFile = path.join(batchDir, "v2rayN-guide.txt");
+  const usageFile = path.join(batchDir, "usage.txt");
+  const disclaimerFile = path.join(batchDir, "disclaimer.txt");
+  const feedbackFile = path.join(batchDir, "feedback-template.txt");
   const packageFile = path.join(batchDir, `${batchCode}.zip`);
 
   fs.writeFileSync(textFile, nodes.map((node) => node.content).join("\n") + "\n", "utf8");
@@ -190,8 +190,9 @@ function v2rayNGuide() {
     "",
     "1. 解压本节点包。",
     "2. 打开 v2rayN。",
-    "3. 使用剪贴板或文件导入方式导入 候选节点.txt。",
-    "4. 本文件中的节点为后台基础初筛结果，不代表最终真实使用延迟。"
+    "3. 使用剪贴板导入或文件导入方式导入 nodes.txt。",
+    "4. nodes.txt 中的内容是一行一个纯节点，不包含后台来源、延迟、备注或日志。",
+    "5. 本批节点只经过后台基础初筛，不代表最终客户端真实使用延迟。"
   ].join("\n");
 }
 
@@ -205,7 +206,9 @@ function usageGuide(options: CreateExportInput, nodes: ExportNode[]) {
     `后台初筛最低延迟：${latencies.length ? `${Math.min(...latencies)}ms` : "无"}`,
     `后台初筛最高延迟：${latencies.length ? `${Math.max(...latencies)}ms` : "无"}`,
     "",
-    "说明：后台初筛延迟只用于剔除明显不可连节点，不等于真实客户端使用延迟。"
+    "说明：后台初筛延迟只用于剔除明显不可连接节点，不等于真实客户端使用延迟。",
+    "建议：先导入少量节点手动测试，确认可用后再继续使用。",
+    "文件说明：nodes.txt 是纯节点文件，可以直接复制或导入客户端。"
   ].join("\n");
 }
 
@@ -213,9 +216,10 @@ function disclaimer() {
   return [
     "免责声明",
     "",
-    "本节点包只整理公开网络内容并进行基础连通性初筛。",
-    "请遵守所在地区法律法规和服务条款。",
-    "节点可用性会随时间变化，本系统不保证持续可用。"
+    "本节点包仅整理公开网络内容并进行基础连通性初筛。",
+    "请遵守所在地法律法规和相关服务条款。",
+    "节点可用性会随时间变化，本系统不保证持续可用。",
+    "本文件不包含后台来源、服务器路径、Token、日志或其他内部信息。"
   ].join("\n");
 }
 
