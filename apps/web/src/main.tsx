@@ -245,7 +245,10 @@ const statusText: Record<string, string> = {
   real_failed: "真实检测失败",
   xray_not_configured: "Xray 未配置",
   xray_unsupported_protocol: "协议暂不支持",
-  xray_converter_pending: "转换器待完善"
+  xray_converter_pending: "转换器待完善",
+  xray_start_failed: "Xray 启动失败",
+  proxy_timeout: "代理访问超时",
+  invalid_test_url: "测试地址无效"
 };
 
 const qualityText: Record<string, string> = {
@@ -269,6 +272,9 @@ const failureText: Record<string, string> = {
   xray_not_configured: "Xray 未配置",
   xray_probe_failed: "Xray 启动检查失败",
   xray_converter_pending: "Xray 转换器待完善",
+  xray_start_failed: "Xray 启动失败",
+  proxy_timeout: "代理访问超时",
+  invalid_test_url: "测试地址无效",
   unknown: "未知原因"
 };
 
@@ -658,6 +664,19 @@ function Dashboard({ user, onLogout }: { user: { username: string }; onLogout: (
     await refresh();
   }
 
+  async function preflightBatch(batch: ExportBatch) {
+    setNotice(`正在检查批次 ${batch.batch_code}，这是发布前可选检查，不会强制阻止发布...`);
+    const res = await apiFetch(`/api/export-batches/${batch.id}/preflight`, { method: "POST" });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setNotice(data.message ?? "发布前检查失败");
+      return;
+    }
+    const summary = data.summary;
+    setNotice(`发布前检查完成：通过率 ${summary.passRate}% ，平均延迟 ${summary.avgLatency ?? "-"}ms，风险 ${riskText(summary.riskLevel)}。${summary.message ?? ""}`);
+    await refresh();
+  }
+
   async function updateFeedbackStatus(item: FeedbackItem, processStatus: string) {
     setNotice("正在更新反馈处理状态...");
     const res = await apiFetch(`/api/feedback/${item.id}`, {
@@ -718,7 +737,7 @@ function Dashboard({ user, onLogout }: { user: { username: string }; onLogout: (
             <Metrics summary={summary} />
             <LatencyDistribution summary={summary} />
             <NodePreview title="低延迟候选节点预览" nodes={nodes.slice(0, 8)} />
-            <BatchTable batches={batches} compact videoMode={videoMode} onPublish={publishBatch} onClose={closeBatch} onDeleteDraft={deleteDraft} />
+            <BatchTable batches={batches} compact videoMode={videoMode} onPublish={publishBatch} onClose={closeBatch} onDeleteDraft={deleteDraft} onPreflight={preflightBatch} />
           </>
         )}
 
@@ -744,11 +763,11 @@ function Dashboard({ user, onLogout }: { user: { username: string }; onLogout: (
         )}
 
         {activeView === "packages" && (
-          <ExportPanel form={exportForm} setForm={setExportForm} exporting={exporting} onSubmit={createExport} batches={batches} videoMode={videoMode} onPublish={publishBatch} onClose={closeBatch} onDeleteDraft={deleteDraft} />
+          <ExportPanel form={exportForm} setForm={setExportForm} exporting={exporting} onSubmit={createExport} batches={batches} videoMode={videoMode} onPublish={publishBatch} onClose={closeBatch} onDeleteDraft={deleteDraft} onPreflight={preflightBatch} />
         )}
 
         {activeView === "claim" && (
-          <ClaimPanel batches={batches} videoMode={videoMode} onPublish={publishBatch} onClose={closeBatch} onDeleteDraft={deleteDraft} />
+          <ClaimPanel batches={batches} videoMode={videoMode} onPublish={publishBatch} onClose={closeBatch} onDeleteDraft={deleteDraft} onPreflight={preflightBatch} />
         )}
 
         {activeView === "stats" && (
@@ -916,7 +935,8 @@ function ExportPanel({
   videoMode,
   onPublish,
   onClose,
-  onDeleteDraft
+  onDeleteDraft,
+  onPreflight
 }: {
   form: ExportFormState;
   setForm: React.Dispatch<React.SetStateAction<ExportFormState>>;
@@ -927,6 +947,7 @@ function ExportPanel({
   onPublish: (batch: ExportBatch) => void;
   onClose: (batch: ExportBatch) => void;
   onDeleteDraft: (batch: ExportBatch) => void;
+  onPreflight: (batch: ExportBatch) => void;
 }) {
   const currentBatch = batches.find((batch) => batch.status === "published");
   const drafts = batches.filter((batch) => batch.status === "draft");
@@ -1030,11 +1051,11 @@ function ExportPanel({
         </button>
       </form>
       <h3>当前发布批次</h3>
-      <BatchTable batches={currentBatch ? [currentBatch] : []} videoMode={videoMode} onPublish={onPublish} onClose={onClose} onDeleteDraft={onDeleteDraft} />
+      <BatchTable batches={currentBatch ? [currentBatch] : []} videoMode={videoMode} onPublish={onPublish} onClose={onClose} onDeleteDraft={onDeleteDraft} onPreflight={onPreflight} />
       <h3>草稿批次</h3>
-      <BatchTable batches={drafts} videoMode={videoMode} onPublish={onPublish} onClose={onClose} onDeleteDraft={onDeleteDraft} />
+      <BatchTable batches={drafts} videoMode={videoMode} onPublish={onPublish} onClose={onClose} onDeleteDraft={onDeleteDraft} onPreflight={onPreflight} />
       <h3>历史批次</h3>
-      <BatchTable batches={batches.filter((batch) => batch.status !== "draft" && batch.status !== "published")} videoMode={videoMode} onPublish={onPublish} onClose={onClose} onDeleteDraft={onDeleteDraft} />
+      <BatchTable batches={batches.filter((batch) => batch.status !== "draft" && batch.status !== "published")} videoMode={videoMode} onPublish={onPublish} onClose={onClose} onDeleteDraft={onDeleteDraft} onPreflight={onPreflight} />
     </section>
   );
 }
@@ -1044,13 +1065,15 @@ function ClaimPanel({
   videoMode,
   onPublish,
   onClose,
-  onDeleteDraft
+  onDeleteDraft,
+  onPreflight
 }: {
   batches: ExportBatch[];
   videoMode: boolean;
   onPublish: (batch: ExportBatch) => void;
   onClose: (batch: ExportBatch) => void;
   onDeleteDraft: (batch: ExportBatch) => void;
+  onPreflight: (batch: ExportBatch) => void;
 }) {
   return (
     <section className="panel">
@@ -1060,7 +1083,7 @@ function ClaimPanel({
           <p className="muted compact">公开领取页只显示口令输入和领取按钮，不展示后台包列表。只有已发布批次可以领取。</p>
         </div>
       </div>
-      <BatchTable batches={batches} claimOnly videoMode={videoMode} onPublish={onPublish} onClose={onClose} onDeleteDraft={onDeleteDraft} />
+      <BatchTable batches={batches} claimOnly videoMode={videoMode} onPublish={onPublish} onClose={onClose} onDeleteDraft={onDeleteDraft} onPreflight={onPreflight} />
     </section>
   );
 }
@@ -1429,7 +1452,8 @@ function BatchTable({
   videoMode,
   onPublish,
   onClose,
-  onDeleteDraft
+  onDeleteDraft,
+  onPreflight
 }: {
   batches: ExportBatch[];
   compact?: boolean;
@@ -1438,6 +1462,7 @@ function BatchTable({
   onPublish: (batch: ExportBatch) => void;
   onClose: (batch: ExportBatch) => void;
   onDeleteDraft: (batch: ExportBatch) => void;
+  onPreflight: (batch: ExportBatch) => void;
 }) {
   return (
     <div className="table spaced">
@@ -1454,6 +1479,7 @@ function BatchTable({
             <span>{batch.node_count}</span>
             <span>{batch.allow_automation ? "自动化可读" : "后台手动"}</span>
             <span className="row-actions">
+              <button className="link-button" type="button" onClick={() => onPreflight(batch)}>发布前检查</button>
               {batch.status === "published" ? (
                 <>
                   <a className="text-link" href={claimUrl} target="_blank" rel="noreferrer">{claimOnly ? "预览" : displayUrl}</a>
@@ -1588,6 +1614,15 @@ function logLevelName(value?: string | null) {
     error: "错误",
     success: "成功",
     debug: "调试"
+  };
+  return value ? names[value] ?? value : "-";
+}
+
+function riskText(value?: string | null) {
+  const names: Record<string, string> = {
+    low: "较低",
+    medium: "中等",
+    high: "较高"
   };
   return value ? names[value] ?? value : "-";
 }

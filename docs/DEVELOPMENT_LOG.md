@@ -8,6 +8,44 @@
 
 ### 本次任务
 
+- 继续补齐用户强调的第二阶段能力，重点完成 Xray-core 真实代理检测，不重复改动已经完成的 UI、中文化、采集、测试、导出、领取页和反馈统计。
+
+### 实现思路
+
+- 保留原有 TCP 基础初筛，把 Xray-core 作为第二级真实检测，只检测 `test_passed` 候选节点。
+- 按节点协议生成临时 Xray 配置，每次只监听 `127.0.0.1` 随机本地端口，再通过本地 HTTP 代理访问 `XRAY_TEST_URL`。
+- 使用低并发、单节点超时、进程关闭和临时目录清理保护轻量 VPS。
+- 将发布前复测设计为可选检查接口，只给通过率和风险提示，不强制阻止发布。
+
+### 已完成
+
+- Xray-core 真检测支持 VLESS、VMess、Trojan、Shadowsocks 的第一阶段转换。
+- 支持 TLS、Reality、WebSocket、gRPC 常见参数的 Xray `streamSettings` 生成。
+- 检测成功后记录真实代理延迟、真实状态、质量档位、测试方式、成功次数和入包资格。
+- 检测失败后记录脱敏失败原因，并避免把完整节点配置写入日志或公开接口。
+- 未配置 Xray 或协议暂不支持时只记录跳过状态，不破坏原有 TCP 候选节点。
+- 新增发布前批次检查接口 `POST /api/export-batches/:id/preflight`。
+- `XRAY_TEST_URL` 默认改为 HTTP 204 地址，同时保留 HTTPS CONNECT 支持。
+
+### 遇到的问题
+
+- 当前本地环境没有 `npm`，系统 `node.exe` 被拒绝执行，因此不能在本地运行 `npm run typecheck` 或 `npm run build`。
+- 真实 Xray 检测必须在 VPS 上安装/配置 xray-core 后才能端到端验证。
+
+### 后续建议
+
+- 在 VPS 上配置 `XRAY_REAL_TEST_ENABLED=true`、`XRAY_CORE_PATH=/usr/local/bin/xray` 后，先用少量节点测试 Xray 检测。
+- Hysteria2、TUIC 和 sing-box 专属格式后续用 sing-box 检测扩展。
+- 后续把质量档位阈值做成系统设置，而不是固定默认规则。
+
+## 2026-05-24
+
+### 开发工具或 AI
+
+- Codex
+
+### 本次任务
+
 - 检查已完成内容，不重复推翻；补齐质量档位、标准节点包、自动化接口和 Xray-core 真实检测安全骨架。
 
 ### 实现思路

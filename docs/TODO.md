@@ -1,5 +1,11 @@
 # TODO
 
+## 刚完成，待 VPS 实测
+
+- Xray-core 真实检测已从安全脚手架升级为实际检测流程：临时配置、`127.0.0.1` 本地随机端口、低并发、超时、进程清理、真实代理延迟记录。
+- 当前已支持 VLESS、VMess、Trojan、Shadowsocks 第一阶段转换；需要在 VPS 上安装并配置 xray-core 后实测。
+- 发布前复测/检查接口已补齐：`POST /api/export-batches/:id/preflight`，下一步可在前端节点包表格增加按钮。
+
 ## 当前高优先级补充
 
 - 在 VPS 上执行 Docker 构建，验证新增质量档位、自动化接口和 Xray 检测入口是否正常。

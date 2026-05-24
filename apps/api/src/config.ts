@@ -35,7 +35,7 @@ const envSchema = z.object({
   XRAY_REAL_TEST_TIMEOUT_SECONDS: z.coerce.number().int().positive().max(30).default(12),
   XRAY_LOCAL_PORT_MIN: z.coerce.number().int().positive().default(32000),
   XRAY_LOCAL_PORT_MAX: z.coerce.number().int().positive().default(32100),
-  XRAY_TEST_URL: z.string().url().default("https://www.gstatic.com/generate_204"),
+  XRAY_TEST_URL: z.string().url().default("http://www.gstatic.com/generate_204"),
   AUTOMATION_API_TOKEN: z.string().default(""),
   DOWNLOAD_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().positive().max(120).default(6)
 });

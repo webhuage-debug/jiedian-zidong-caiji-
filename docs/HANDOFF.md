@@ -1,5 +1,40 @@
 # Handoff Log
 
+## 2026-05-24 Xray-core 真检测补齐与发布前复测接口
+### 本次目标
+- 接上已完成的质量分档、标准节点包、自动化接口和发布草稿机制，不重复重构 UI。
+- 把 `POST /api/xray-test-runs` 从“安全脚手架”升级为真正的 Xray-core 代理检测流程。
+- 补齐节点包发布前复测/检查接口，方便发布前查看通过率、风险等级、最近测试时间和平均延迟。
+### 本次完成
+- `apps/api/src/tester/xrayService.ts` 已实现真实检测流程：读取基础测试通过节点，转换 VLESS / VMess / Trojan / Shadowsocks 为临时 Xray 配置，启动临时 Xray 进程，通过本地 HTTP 代理访问测试地址，记录真实代理延迟。
+- Xray 临时入站只监听 `127.0.0.1`，使用 `XRAY_LOCAL_PORT_MIN` / `XRAY_LOCAL_PORT_MAX` 范围内随机端口，不监听 `0.0.0.0`，不对公网开放代理端口。
+- 每个节点测试都有 `XRAY_REAL_TEST_TIMEOUT_SECONDS` 超时；测试结束后会关闭 Xray，必要时强制结束，并删除临时配置目录。
+- 并发仍由 `XRAY_REAL_TEST_CONCURRENCY` 控制，配置上限为 5，默认 2，避免轻量 VPS 负载失控。
+- 成功节点写入 `real_status=real_passed`、`real_latency_ms`、`quality_tier`、`test_method=xray-core`、`eligible_for_package=1`。
+- 失败节点写入 `real_status=real_failed` 和脱敏失败原因，并设为不可进入高质量包；未配置 Xray 或协议暂不支持时只记录状态，不误伤原有 TCP 候选资格。
+- 当前 Xray 第一阶段支持：VLESS、VMess、Trojan、Shadowsocks；Hysteria2、TUIC、sing-box 专属格式继续留给后续 sing-box 扩展。
+- `XRAY_TEST_URL` 默认改为 `http://www.gstatic.com/generate_204`，同时代码支持 HTTPS CONNECT 测试地址。
+- 新增 `POST /api/export-batches/:id/preflight`：对已生成批次做发布前检查，返回节点数、真实检测数量、通过率、平均延迟、质量档位、风险等级和提示。该检查是可选，不强制阻止发布。
+### 修改文件
+- `.env.example`
+- `apps/api/src/config.ts`
+- `apps/api/src/tester/xrayService.ts`
+- `apps/api/src/exporter/exportService.ts`
+- `apps/api/src/routes.ts`
+- `docs/HANDOFF.md`
+- `docs/DEVELOPMENT_LOG.md`
+- `docs/TODO.md`
+- `docs/SECURITY.md`
+### 验证结果
+- 本地 Windows 环境没有可用 `npm` 命令，系统 `node.exe` 也被当前环境拒绝执行；因此本地无法完成 TypeScript typecheck / build。
+- 已进行代码级检查，确认没有把完整节点链接、Token、数据库、节点包或运行数据写入新增逻辑。
+- 需要在 VPS Docker 环境执行：`docker compose up -d --build`，再配置 `XRAY_REAL_TEST_ENABLED=true` 和 `XRAY_CORE_PATH=/usr/local/bin/xray` 后实测 `POST /api/xray-test-runs`。
+### 当前遗留
+- `clash.yaml` 和 `sing-box.json` 仍是安全模板，主导入文件仍为 `nodes.txt`；完整协议转换可后续继续做。
+- 质量档位阈值当前为默认规则，后续可做成后台可编辑配置。
+### Git 状态
+- 本次为用户要求的本地补齐工作，尚未提交、尚未 push。用户确认后再整体提交 GitHub。
+
 ## 2026-05-24 第二阶段能力补齐：质量档位、自动化接口、Xray 检测骨架
 
 ### 本次目标

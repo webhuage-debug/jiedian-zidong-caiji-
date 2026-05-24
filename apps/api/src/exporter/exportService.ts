@@ -207,6 +207,72 @@ export function closeExportBatch(batchId: number) {
   if (!result.changes) throw new Error("batch cannot be closed");
 }
 
+export function preflightExportBatch(batchId: number) {
+  const rows = db
+    .prepare(
+      `SELECT nodes.id, nodes.status, nodes.latency_ms, nodes.real_latency_ms,
+              nodes.real_status, nodes.last_tested_at, nodes.real_tested_at
+       FROM export_batch_nodes
+       JOIN nodes ON nodes.id = export_batch_nodes.node_id
+       WHERE export_batch_nodes.batch_id = ?`
+    )
+    .all(batchId) as Array<{
+      id: number;
+      status: string;
+      latency_ms: number | null;
+      real_latency_ms: number | null;
+      real_status: string | null;
+      last_tested_at: string | null;
+      real_tested_at: string | null;
+    }>;
+  if (!rows.length) throw new Error("batch has no nodes");
+
+  const realChecked = rows.filter((row) => Boolean(row.real_status)).length;
+  const realPassed = rows.filter((row) => row.real_status === "real_passed").length;
+  const tcpPassed = rows.filter((row) => row.status === "test_passed" || row.status === "exported").length;
+  const passBase = realChecked > 0 ? realChecked : rows.length;
+  const passCount = realChecked > 0 ? realPassed : tcpPassed;
+  const passRate = Math.round((passCount / passBase) * 100);
+  const latencyValues = rows
+    .map((row) => row.real_latency_ms ?? row.latency_ms)
+    .filter((value): value is number => typeof value === "number");
+  const avgLatency = latencyValues.length ? Math.round(latencyValues.reduce((sum, value) => sum + value, 0) / latencyValues.length) : null;
+  const qualityTier = avgLatency === null ? null : qualityTierForLatency(avgLatency);
+  const latestTestedAt = rows
+    .map((row) => row.real_tested_at ?? row.last_tested_at)
+    .filter((value): value is string => Boolean(value))
+    .sort()
+    .at(-1) ?? null;
+  const testMethod = realChecked > 0 ? "xray-core" : "tcp";
+  const riskLevel = passRate >= 90 ? "low" : passRate >= 70 ? "medium" : "high";
+
+  db.prepare(
+    `UPDATE export_batches
+     SET pass_rate = ?, last_tested_at = ?, test_method = ?, quality_tier = COALESCE(?, quality_tier), updated_at = ?
+     WHERE id = ?`
+  ).run(passRate, latestTestedAt, testMethod, qualityTier, new Date().toISOString(), batchId);
+
+  return {
+    batchId,
+    nodeCount: rows.length,
+    checkedBy: testMethod,
+    realChecked,
+    realPassed,
+    tcpPassed,
+    passRate,
+    avgLatency,
+    qualityTier,
+    latestTestedAt,
+    riskLevel,
+    message:
+      riskLevel === "low"
+        ? "发布风险较低，但免费节点仍可能随时失效。"
+        : riskLevel === "medium"
+          ? "建议发布前手动抽测，部分节点可能已经失效。"
+          : "风险较高，建议重新测试或重新生成节点包。"
+  };
+}
+
 export function deleteDraftBatch(batchId: number) {
   const batch = db
     .prepare("SELECT id, status, package_path, text_file_path FROM export_batches WHERE id = ?")
@@ -345,6 +411,13 @@ function inferBatchQuality(nodes: ExportNode[]) {
   if (avg <= 100) return "high";
   if (avg <= 200) return "premium";
   if (avg <= 300) return "community";
+  return "backup";
+}
+
+function qualityTierForLatency(latencyMs: number) {
+  if (latencyMs <= 100) return "high";
+  if (latencyMs <= 200) return "premium";
+  if (latencyMs <= 300) return "community";
   return "backup";
 }
 

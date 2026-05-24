@@ -1,5 +1,14 @@
 # Security
 
+## 2026-05-24 Xray-core 真检测安全补充
+
+- Xray-core 真实检测已实现实际临时代理检测流程，但默认仍关闭，必须通过 `XRAY_REAL_TEST_ENABLED=true` 和 `XRAY_CORE_PATH` 显式启用。
+- 临时 Xray 入站固定 `listen: 127.0.0.1`，端口来自 `XRAY_LOCAL_PORT_MIN` / `XRAY_LOCAL_PORT_MAX` 随机范围，禁止监听 `0.0.0.0`。
+- 每个节点单独生成临时配置目录，测试结束后删除；测试完成后先正常关闭 Xray 进程，必要时强制结束，避免残留代理进程。
+- 并发由 `XRAY_REAL_TEST_CONCURRENCY` 控制，默认 2，最大 5；单节点超时由 `XRAY_REAL_TEST_TIMEOUT_SECONDS` 控制，避免轻量 VPS 负载失控。
+- 测试日志和公开接口不输出完整节点链接、UUID、密码、Reality 参数、临时配置内容、临时端口、Token、Cookie、Session 或真实文件路径。
+- 当前第一阶段支持 VLESS、VMess、Trojan、Shadowsocks；Hysteria2、TUIC 和 sing-box 专属协议必须后续通过 sing-box 扩展，不能强行用 Xray 误测。
+
 ## Xray-core 真实检测安全边界
 
 - Xray-core 真实检测默认关闭，必须显式配置 `XRAY_REAL_TEST_ENABLED=true` 和 `XRAY_CORE_PATH`。

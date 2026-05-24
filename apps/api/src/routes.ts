@@ -5,7 +5,7 @@ import { requireAdmin } from "./auth.js";
 import { runCollection } from "./collector/collectionService.js";
 import { config } from "./config.js";
 import { db } from "./db.js";
-import { closeExportBatch, createExportBatch, createExportSchema, deleteDraftBatch, listExportBatches, publishExportBatch } from "./exporter/exportService.js";
+import { closeExportBatch, createExportBatch, createExportSchema, deleteDraftBatch, listExportBatches, preflightExportBatch, publishExportBatch } from "./exporter/exportService.js";
 import { maskUrl, redactSensitiveText } from "./security/redact.js";
 import { isPublicVideoModeEnabled, setSetting } from "./settings.js";
 import { runNodeTests } from "./tester/testService.js";
@@ -199,6 +199,17 @@ export function registerApiRoutes(app: FastifyInstance) {
       return { ok: true };
     } catch (error) {
       const message = error instanceof Error ? error.message : "close failed";
+      return reply.code(400).send({ ok: false, message });
+    }
+  });
+
+  app.post("/api/export-batches/:id/preflight", { preHandler: requireAdmin }, async (request, reply) => {
+    try {
+      const { id } = request.params as { id: string };
+      const summary = preflightExportBatch(Number(id));
+      return { ok: true, summary };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "preflight failed";
       return reply.code(400).send({ ok: false, message });
     }
   });
