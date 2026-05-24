@@ -307,7 +307,7 @@ async function runXrayRealTestsInternal(options?: XrayRunOptions): Promise<XrayS
 
 function selectXrayQueueNodes(options: XrayRunOptions, limit: number) {
   const mode = normalizeMode(options.mode);
-  const where = ["status = 'test_passed'", "protocol IN ('vless', 'vmess', 'trojan', 'ss')"];
+  const where = ["status = 'test_passed'"];
   const params: unknown[] = [];
   const recentFailureCutoff = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
 

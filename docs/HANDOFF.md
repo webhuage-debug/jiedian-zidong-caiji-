@@ -7,8 +7,17 @@
 - 已完成：`GET /api/xray-test-runs/stats` 返回全量候选统计，包括候选总数、已真实检测、未检测、真实可用、真实失败、平均真实延迟、0-100 / 100-200 / 200-300 / 300ms 以上档位数量和队列运行状态。
 - 已完成：`POST /api/xray-test-runs/pause` 与 `POST /api/xray-test-runs/stop`。暂停/停止会在当前批次结束后生效，已完成结果保留。
 - 已完成：后台“测试记录”页面增加 Xray 队列进度、全量统计、检测范围、每批数量、协议和延迟区间筛选，以及开始全量真实检测、暂停检测、继续检测、停止检测按钮。
+- 本次追加修复：Xray 队列不再只读取 Xray 已支持协议；未支持协议也会进入队列并被记录为“协议暂不支持”，避免全量检测进度长期停留在未检测状态。
+- 本次追加修复：`GET /api/xray-test-runs/stats` 返回 `configured`，前端据此显示“Xray-core 已启用”或“Xray-core 未启用，请配置内核路径”，不再固定显示旧提示。
 - 安全边界：Xray 临时代理仍只监听 `127.0.0.1`，并发仍受 `XRAY_REAL_TEST_CONCURRENCY` 控制，单节点超时仍受 `XRAY_REAL_TEST_TIMEOUT_SECONDS` 控制。
 - 注意：暂停和停止不是强杀正在检测的单个节点，而是在当前批次完成后生效，避免破坏正在清理的临时 Xray 进程。
+
+## 2026-05-24 节点包 ZIP 兼容性修复
+
+- 本次目标：修复加密 ZIP 在手机、浏览器、系统自带解压工具或 Telegram 下载后可能出现乱码、异常文件夹、无法读取的问题。
+- 已完成：节点包生成逻辑改为不加密 ZIP；领取安全由公开领取页口令验证负责，用户下载后不需要二次输入 ZIP 解压密码。
+- 已确认：ZIP 仍使用扁平打包模式，根目录直接包含 `nodes.txt`、`clash.yaml`、`sing-box.json`、`README.txt`、`v2rayN-guide.txt`、`usage.txt`、`disclaimer.txt`、`feedback-template.txt`，不创建中文目录、随机目录或批次目录。
+- 已确认：ZIP 内文件名全部为英文 ASCII；文本文件继续使用 UTF-8 编码，中文说明保留在文本内容里。
 
 ## 2026-05-24 Xray-core 真检测补齐与发布前复测接口
 ### 本次目标

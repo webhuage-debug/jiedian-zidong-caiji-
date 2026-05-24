@@ -12,7 +12,7 @@ import { runNodeTests } from "./tester/testService.js";
 import { getXrayQueueRuntime, getXrayQueueStats, pauseXrayQueue, runXrayRealTests, stopXrayQueue, type XrayRunMode } from "./tester/xrayService.js";
 
 export function registerApiRoutes(app: FastifyInstance) {
-  app.get("/health", async () => ({ ok: true, version: "1.0.0" }));
+  app.get("/health", async () => ({ ok: true, version: "1.0.1" }));
 
   app.get("/api/dashboard/summary", { preHandler: requireAdmin }, async () => {
     const nodeCounts = db
@@ -27,7 +27,7 @@ export function registerApiRoutes(app: FastifyInstance) {
     const recentTest = db.prepare("SELECT * FROM test_runs ORDER BY started_at DESC LIMIT 1").get() as Record<string, unknown> | undefined;
 
     return {
-      version: "1.0.0",
+      version: "1.0.1",
       systemStatus: "running",
       candidateNodes: countStatus(nodeCounts, "test_passed"),
       pendingNodes: countStatus(nodeCounts, "pending_test"),
@@ -183,7 +183,11 @@ export function registerApiRoutes(app: FastifyInstance) {
   });
 
   app.get("/api/xray-test-runs/stats", { preHandler: requireAdmin }, async () => {
-    return { ...getXrayQueueStats(), runtime: getXrayQueueRuntime() };
+    return {
+      ...getXrayQueueStats(),
+      configured: Boolean(config.XRAY_REAL_TEST_ENABLED && config.XRAY_CORE_PATH && fs.existsSync(config.XRAY_CORE_PATH)),
+      runtime: getXrayQueueRuntime()
+    };
   });
 
   app.post("/api/xray-test-runs/pause", { preHandler: requireAdmin }, async () => {

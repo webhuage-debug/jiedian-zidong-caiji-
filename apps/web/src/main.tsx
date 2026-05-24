@@ -71,6 +71,7 @@ type XrayQueueStats = {
   tierPremium?: number;
   tierCommunity?: number;
   tierBackup?: number;
+  configured?: boolean;
   lastTestedAt?: string | null;
   runtime?: {
     status: string;
@@ -797,7 +798,7 @@ function Dashboard({ user, onLogout }: { user: { username: string }; onLogout: (
         <header className="topbar">
           <div>
             <h1>{currentNav.label}</h1>
-            <p>v1.0.0 正式版：采集、测试、导出、领取、反馈、统计和安全模式。</p>
+            <p>v1.0.1：修复 Xray 队列检测、节点包兼容性和领取体验。</p>
           </div>
           <div className="top-actions">
             <button className={videoMode ? "icon active" : "icon"} onClick={toggleVideoMode} title="公开视频模式">
@@ -1030,7 +1031,11 @@ function TestPanel({
           </button>
         </div>
       </div>
-      <div className="notice">Xray-core 正在按队列做全量真实检测：每批默认 50 条，低并发持续运行，直到未检测候选节点全部完成。临时代理只允许监听 127.0.0.1。</div>
+      <div className="notice">
+        {xrayStats?.configured
+          ? "Xray-core 已启用：当前使用真实代理检测，临时代理仅监听 127.0.0.1，低并发队列运行。"
+          : "Xray-core 未启用，请配置内核路径。配置完成后，系统会每批检测 50 条并自动持续检测全部未检测候选节点。"}
+      </div>
       <div className="metric-grid compact">
         <article><span>候选节点总数</span><strong>{xrayStats?.candidateTotal ?? 0}</strong></article>
         <article><span>已真实检测</span><strong>{xrayStats?.xrayChecked ?? 0}</strong></article>
@@ -1432,7 +1437,7 @@ function SettingsPanel({ videoMode, onToggleVideoMode, summary }: { videoMode: b
         </button>
         <div>
           <strong>系统状态</strong>
-          <p className="muted compact">{zhStatus(summary?.systemStatus ?? "running")} / v{summary?.version ?? "1.0.0"}</p>
+          <p className="muted compact">{zhStatus(summary?.systemStatus ?? "running")} / v{summary?.version ?? "1.0.1"}</p>
         </div>
       </div>
       <div className="settings-list">

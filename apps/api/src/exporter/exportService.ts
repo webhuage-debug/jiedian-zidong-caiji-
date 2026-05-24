@@ -82,7 +82,7 @@ export async function createExportBatch(input: CreateExportInput) {
   fs.writeFileSync(disclaimerFile, disclaimer(), "utf8");
   fs.writeFileSync(feedbackFile, feedbackTemplate(batchCode), "utf8");
 
-  await createPasswordZip(batchDir, packageFile, options.passphrase, [
+  await createPlainZip(batchDir, packageFile, [
     path.basename(textFile),
     path.basename(clashFile),
     path.basename(singboxFile),
@@ -329,18 +329,16 @@ function selectNodes(options: CreateExportInput) {
     .all(...params, options.count) as ExportNode[];
 }
 
-async function createPasswordZip(cwd: string, packageFile: string, passphrase: string, fileNames: string[]) {
+async function createPlainZip(cwd: string, packageFile: string, fileNames: string[]) {
   try {
-    const args = passphrase
-      ? ["-j", "-P", passphrase, packageFile, ...fileNames.map((file) => path.join(cwd, file))]
-      : ["-j", packageFile, ...fileNames.map((file) => path.join(cwd, file))];
+    const args = ["-j", packageFile, ...fileNames.map((file) => path.join(cwd, file))];
     await execFileAsync("zip", args, {
       cwd,
       windowsHide: true
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "zip command failed";
-    throw new Error(`failed to create encrypted zip: ${message}`);
+    throw new Error(`failed to create zip: ${message}`);
   }
 }
 
@@ -399,9 +397,10 @@ function readmeTemplate(options: CreateExportInput, nodes: ExportNode[]) {
     "重要说明：",
     "1. nodes.txt 是主格式，一行一个纯节点，可复制或导入客户端。",
     "2. clash.yaml 和 sing-box.json 是第一版兼容模板，复杂协议自动转换后续继续完善。",
-    "3. 免费节点存在时效性，部分节点失效属于正常情况。",
-    "4. 本系统不承诺 100% 可用、长期可用或所有地区都可用。",
-    "5. 本包不包含后台来源、服务器路径、Token、日志或数据库信息。"
+    "3. 领取页已完成口令验证，ZIP 文件本身不再加密，下载后可直接打开。",
+    "4. 免费节点存在时效性，部分节点失效属于正常情况。",
+    "5. 本系统不承诺 100% 可用、长期可用或所有地区都可用。",
+    "6. 本包不包含后台来源、服务器路径、Token、日志或数据库信息。"
   ].join("\n");
 }
 
@@ -452,7 +451,8 @@ function v2rayNGuide() {
     "2. 打开 v2rayN。",
     "3. 使用剪贴板导入或文件导入方式导入 nodes.txt。",
     "4. nodes.txt 中的内容是一行一个纯节点，不包含后台来源、延迟、备注或日志。",
-    "5. 本批节点只经过后台基础初筛，不代表最终客户端真实使用延迟。"
+    "5. ZIP 文件不加密，领取口令只用于领取页验证。",
+    "6. 本批节点只经过后台基础初筛，不代表最终客户端真实使用延迟。"
   ].join("\n");
 }
 
@@ -468,7 +468,8 @@ function usageGuide(options: CreateExportInput, nodes: ExportNode[]) {
     "",
     "说明：后台初筛延迟只用于剔除明显不可连接节点，不等于真实客户端使用延迟。",
     "建议：先导入少量节点手动测试，确认可用后再继续使用。",
-    "文件说明：nodes.txt 是纯节点文件，可以直接复制或导入客户端。"
+    "文件说明：nodes.txt 是纯节点文件，可以直接复制或导入客户端。",
+    "兼容说明：ZIP 文件不加密，根目录直接放置 nodes.txt、clash.yaml、sing-box.json 等文件，方便 Windows、手机和 Telegram 打开。"
   ].join("\n");
 }
 
