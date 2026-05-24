@@ -53,6 +53,14 @@ CREATE TABLE IF NOT EXISTS nodes (
   collected_at TEXT NOT NULL,
   last_tested_at TEXT,
   latency_ms INTEGER,
+  real_latency_ms INTEGER,
+  real_status TEXT,
+  real_tested_at TEXT,
+  test_method TEXT NOT NULL DEFAULT 'tcp',
+  success_count INTEGER NOT NULL DEFAULT 0,
+  failure_count INTEGER NOT NULL DEFAULT 0,
+  quality_tier TEXT,
+  eligible_for_package INTEGER NOT NULL DEFAULT 1,
   status TEXT NOT NULL DEFAULT 'pending_test',
   failure_reason TEXT,
   exported_at TEXT,
@@ -103,6 +111,7 @@ CREATE TABLE IF NOT EXISTS test_runs (
   min_latency_ms INTEGER,
   avg_latency_ms INTEGER,
   max_latency_ms INTEGER,
+  test_method TEXT NOT NULL DEFAULT 'tcp',
   summary_json TEXT
 );
 
@@ -127,11 +136,27 @@ CREATE TABLE IF NOT EXISTS export_batches (
   passphrase_hash TEXT,
   node_count INTEGER NOT NULL DEFAULT 0,
   text_file_path TEXT,
+  clash_file_path TEXT,
+  singbox_file_path TEXT,
+  readme_file_path TEXT,
   package_path TEXT,
   public_slug TEXT NOT NULL UNIQUE,
   export_options_json TEXT,
+  quality_tier TEXT,
+  requires_passphrase INTEGER NOT NULL DEFAULT 1,
+  allow_public_claim INTEGER NOT NULL DEFAULT 1,
+  allow_automation INTEGER NOT NULL DEFAULT 0,
+  allow_direct_download INTEGER NOT NULL DEFAULT 0,
+  allow_hermes_file INTEGER NOT NULL DEFAULT 0,
+  allow_hermes_link INTEGER NOT NULL DEFAULT 0,
+  last_tested_at TEXT,
+  test_method TEXT,
+  pass_rate INTEGER,
   published_at TEXT,
   expires_at TEXT,
+  max_downloads INTEGER,
+  ip_download_limit INTEGER NOT NULL DEFAULT 3,
+  wrong_passphrase_limit INTEGER NOT NULL DEFAULT 8,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -146,6 +171,13 @@ CREATE TABLE IF NOT EXISTS batch_stats (
   download_count INTEGER NOT NULL DEFAULT 0,
   feedback_count INTEGER NOT NULL DEFAULT 0,
   updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS export_batch_nodes (
+  batch_id INTEGER NOT NULL REFERENCES export_batches(id) ON DELETE CASCADE,
+  node_id INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (batch_id, node_id)
 );
 
 CREATE TABLE IF NOT EXISTS public_events (
@@ -166,6 +198,10 @@ CREATE TABLE IF NOT EXISTS feedback (
   device TEXT,
   client_app TEXT,
   is_usable INTEGER,
+  issue_type TEXT,
+  source_platform TEXT,
+  process_status TEXT NOT NULL DEFAULT 'pending',
+  process_note TEXT,
   note TEXT,
   created_at TEXT NOT NULL
 );

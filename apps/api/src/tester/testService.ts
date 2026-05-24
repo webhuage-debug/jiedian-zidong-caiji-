@@ -125,8 +125,18 @@ function recordNodeResult(testRunId: number, nodeId: number, status: "test_passe
     db.prepare(
       `UPDATE nodes
        SET status = ?, latency_ms = ?, failure_reason = ?, last_tested_at = ?, updated_at = ?
+           , test_method = 'tcp'
+           , success_count = success_count + CASE WHEN ? = 'test_passed' THEN 1 ELSE 0 END
+           , failure_count = failure_count + CASE WHEN ? = 'test_failed' THEN 1 ELSE 0 END
+           , quality_tier = CASE
+               WHEN ? IS NULL THEN quality_tier
+               WHEN ? <= 100 THEN 'high'
+               WHEN ? <= 200 THEN 'premium'
+               WHEN ? <= 300 THEN 'community'
+               ELSE 'backup'
+             END
        WHERE id = ?`
-    ).run(status, latencyMs, failureReason, now, now, nodeId);
+    ).run(status, latencyMs, failureReason, now, now, status, status, latencyMs, latencyMs, latencyMs, latencyMs, nodeId);
   });
   transaction();
 }

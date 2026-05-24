@@ -19,19 +19,76 @@ export function initializeDatabase() {
 }
 
 function runLightweightMigrations() {
+  db.prepare(
+    `CREATE TABLE IF NOT EXISTS export_batch_nodes (
+      batch_id INTEGER NOT NULL REFERENCES export_batches(id) ON DELETE CASCADE,
+      node_id INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (batch_id, node_id)
+    )`
+  ).run();
+
   const sourceColumns = db.prepare("PRAGMA table_info(node_sources)").all() as Array<{ name: string }>;
   if (!sourceColumns.some((column) => column.name === "content_hash")) {
     db.prepare("ALTER TABLE node_sources ADD COLUMN content_hash TEXT").run();
   }
 
+  const nodeColumns = db.prepare("PRAGMA table_info(nodes)").all() as Array<{ name: string }>;
+  addColumn(nodeColumns, "nodes", "real_latency_ms", "INTEGER");
+  addColumn(nodeColumns, "nodes", "real_status", "TEXT");
+  addColumn(nodeColumns, "nodes", "real_tested_at", "TEXT");
+  addColumn(nodeColumns, "nodes", "test_method", "TEXT NOT NULL DEFAULT 'tcp'");
+  addColumn(nodeColumns, "nodes", "success_count", "INTEGER NOT NULL DEFAULT 0");
+  addColumn(nodeColumns, "nodes", "failure_count", "INTEGER NOT NULL DEFAULT 0");
+  addColumn(nodeColumns, "nodes", "quality_tier", "TEXT");
+  addColumn(nodeColumns, "nodes", "eligible_for_package", "INTEGER NOT NULL DEFAULT 1");
+
+  const testRunColumns = db.prepare("PRAGMA table_info(test_runs)").all() as Array<{ name: string }>;
+  addColumn(testRunColumns, "test_runs", "test_method", "TEXT NOT NULL DEFAULT 'tcp'");
+
   const batchColumns = db.prepare("PRAGMA table_info(export_batches)").all() as Array<{ name: string }>;
   if (batchColumns.length) {
-    if (!batchColumns.some((column) => column.name === "text_file_path")) {
-      db.prepare("ALTER TABLE export_batches ADD COLUMN text_file_path TEXT").run();
+    addColumn(batchColumns, "export_batches", "text_file_path", "TEXT");
+    addColumn(batchColumns, "export_batches", "clash_file_path", "TEXT");
+    addColumn(batchColumns, "export_batches", "singbox_file_path", "TEXT");
+    addColumn(batchColumns, "export_batches", "readme_file_path", "TEXT");
+    addColumn(batchColumns, "export_batches", "export_options_json", "TEXT");
+    addColumn(batchColumns, "export_batches", "quality_tier", "TEXT");
+    addColumn(batchColumns, "export_batches", "requires_passphrase", "INTEGER NOT NULL DEFAULT 1");
+    addColumn(batchColumns, "export_batches", "allow_public_claim", "INTEGER NOT NULL DEFAULT 1");
+    addColumn(batchColumns, "export_batches", "allow_automation", "INTEGER NOT NULL DEFAULT 0");
+    addColumn(batchColumns, "export_batches", "allow_direct_download", "INTEGER NOT NULL DEFAULT 0");
+    addColumn(batchColumns, "export_batches", "allow_hermes_file", "INTEGER NOT NULL DEFAULT 0");
+    addColumn(batchColumns, "export_batches", "allow_hermes_link", "INTEGER NOT NULL DEFAULT 0");
+    addColumn(batchColumns, "export_batches", "last_tested_at", "TEXT");
+    addColumn(batchColumns, "export_batches", "test_method", "TEXT");
+    addColumn(batchColumns, "export_batches", "pass_rate", "INTEGER");
+    addColumn(batchColumns, "export_batches", "max_downloads", "INTEGER");
+    addColumn(batchColumns, "export_batches", "ip_download_limit", "INTEGER NOT NULL DEFAULT 3");
+    addColumn(batchColumns, "export_batches", "wrong_passphrase_limit", "INTEGER NOT NULL DEFAULT 8");
+  }
+
+  const feedbackColumns = db.prepare("PRAGMA table_info(feedback)").all() as Array<{ name: string }>;
+  if (feedbackColumns.length) {
+    if (!feedbackColumns.some((column) => column.name === "issue_type")) {
+      db.prepare("ALTER TABLE feedback ADD COLUMN issue_type TEXT").run();
     }
-    if (!batchColumns.some((column) => column.name === "export_options_json")) {
-      db.prepare("ALTER TABLE export_batches ADD COLUMN export_options_json TEXT").run();
+    if (!feedbackColumns.some((column) => column.name === "source_platform")) {
+      db.prepare("ALTER TABLE feedback ADD COLUMN source_platform TEXT").run();
     }
+    if (!feedbackColumns.some((column) => column.name === "process_status")) {
+      db.prepare("ALTER TABLE feedback ADD COLUMN process_status TEXT NOT NULL DEFAULT 'pending'").run();
+    }
+    if (!feedbackColumns.some((column) => column.name === "process_note")) {
+      db.prepare("ALTER TABLE feedback ADD COLUMN process_note TEXT").run();
+    }
+  }
+}
+
+function addColumn(columns: Array<{ name: string }>, table: string, name: string, definition: string) {
+  if (!columns.some((column) => column.name === name)) {
+    db.prepare(`ALTER TABLE ${table} ADD COLUMN ${name} ${definition}`).run();
+    columns.push({ name });
   }
 }
 

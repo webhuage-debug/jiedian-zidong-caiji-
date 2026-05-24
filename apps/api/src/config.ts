@@ -29,6 +29,14 @@ const envSchema = z.object({
   TEST_CONNECT_TIMEOUT_SECONDS: z.coerce.number().int().positive().max(30).default(5),
   TEST_BATCH_SIZE: z.coerce.number().int().positive().max(1000).default(100),
   TEST_MAX_CONCURRENCY: z.coerce.number().int().positive().max(100).default(20),
+  XRAY_REAL_TEST_ENABLED: z.enum(["true", "false"]).default("false"),
+  XRAY_CORE_PATH: z.string().default(""),
+  XRAY_REAL_TEST_CONCURRENCY: z.coerce.number().int().positive().max(5).default(2),
+  XRAY_REAL_TEST_TIMEOUT_SECONDS: z.coerce.number().int().positive().max(30).default(12),
+  XRAY_LOCAL_PORT_MIN: z.coerce.number().int().positive().default(32000),
+  XRAY_LOCAL_PORT_MAX: z.coerce.number().int().positive().default(32100),
+  XRAY_TEST_URL: z.string().url().default("https://www.gstatic.com/generate_204"),
+  AUTOMATION_API_TOKEN: z.string().default(""),
   DOWNLOAD_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().positive().max(120).default(6)
 });
 
@@ -42,6 +50,7 @@ const cookieSecure =
 export const config = {
   ...parsed,
   DATA_DIR: dataDir,
+  XRAY_REAL_TEST_ENABLED: parsed.XRAY_REAL_TEST_ENABLED === "true",
   DATABASE_PATH: path.resolve(parsed.DATABASE_PATH ?? path.join(dataDir, "app.db")),
   EXPORT_DIR: path.resolve(parsed.EXPORT_DIR ?? path.join(dataDir, "exports")),
   SESSION_TTL_MS: parsed.SESSION_TTL_HOURS * 60 * 60 * 1000,
@@ -49,6 +58,7 @@ export const config = {
   COLLECT_MIN_INTERVAL_MS: parsed.COLLECT_MIN_INTERVAL_MINUTES * 60 * 1000,
   HTTP_TIMEOUT_MS: parsed.HTTP_TIMEOUT_SECONDS * 1000,
   TEST_CONNECT_TIMEOUT_MS: parsed.TEST_CONNECT_TIMEOUT_SECONDS * 1000,
+  XRAY_REAL_TEST_TIMEOUT_MS: parsed.XRAY_REAL_TEST_TIMEOUT_SECONDS * 1000,
   PUBLIC_SOURCE_SEEDS: parsed.PUBLIC_SOURCE_SEEDS.split(",")
     .map((value) => value.trim())
     .filter(Boolean),

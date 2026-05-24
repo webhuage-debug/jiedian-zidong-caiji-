@@ -9,6 +9,7 @@ import { db } from "./db.js";
 
 const unlockCookiePrefix = "pna_claim_";
 const downloadBuckets = new Map<string, { count: number; resetAt: number }>();
+const verifyBuckets = new Map<string, { wrongCount: number; resetAt: number; lockedUntil?: number }>();
 
 type BatchRow = {
   id: number;
@@ -16,16 +17,21 @@ type BatchRow = {
   name: string;
   description?: string;
   status: string;
-  passphrase_hash: string;
-  node_count: number;
+  passphrase_hash: string | null;
   package_path: string;
   public_slug: string;
-  expires_at?: string;
+  requires_passphrase: number;
+  allow_public_claim: number;
+  expires_at?: string | null;
+  max_downloads?: number | null;
+  ip_download_limit?: number | null;
+  wrong_passphrase_limit?: number | null;
   created_at: string;
 };
 
 export function registerPublicClaimRoutes(app: FastifyInstance) {
-  app.get("/api/public/batches/:slug", async (request) => {
+  app.get("/api/public/claim/:slug", async (request, reply) => {
+    reply.header("X-Robots-Tag", "noindex, nofollow");
     const { slug } = request.params as { slug: string };
     const batch = getPublicBatch(slug);
     if (!batch) return { found: false };
@@ -34,48 +40,51 @@ export function registerPublicClaimRoutes(app: FastifyInstance) {
     return {
       found: true,
       batch: publicBatchInfo(batch),
-      unlocked: isUnlocked(request, slug)
+      unlocked: !batch.requires_passphrase || isUnlocked(request, slug)
     };
   });
 
-  app.post("/api/public/batches/:slug/verify", async (request, reply) => {
+  app.post("/api/public/claim/:slug/verify", async (request, reply) => {
+    reply.header("X-Robots-Tag", "noindex, nofollow");
     const { slug } = request.params as { slug: string };
-    const body = z.object({ passphrase: z.string().min(1) }).parse(request.body);
+    const body = z.object({ passphrase: z.string().max(128).default("") }).parse(request.body);
     const batch = getPublicBatch(slug);
-    if (!batch) {
-      return reply.code(404).send({ ok: false, message: "领取批次不存在。" });
+    if (!batch) return reply.code(404).send({ ok: false, message: "领取已关闭" });
+    if (!batch.requires_passphrase) {
+      incrementStat(batch.id, "unlock_count");
+      setUnlockCookie(reply, slug);
+      return { ok: true, downloadUrl: `/api/public/claim/${slug}/download` };
     }
+    if (!allowVerify(request, slug, batch)) return reply.code(429).send({ ok: false, message: "请求过于频繁，请稍后再试" });
 
     incrementStat(batch.id, "passphrase_attempt_count");
     recordPublicEvent(batch.id, "passphrase_attempt", request);
-    const valid = await bcrypt.compare(body.passphrase, batch.passphrase_hash);
+    const valid = batch.passphrase_hash ? await bcrypt.compare(body.passphrase, batch.passphrase_hash) : false;
     if (!valid) {
+      recordWrongPassphrase(request, slug, batch);
       incrementStat(batch.id, "passphrase_wrong_count");
       recordPublicEvent(batch.id, "passphrase_wrong", request);
-      return reply.code(401).send({ ok: false, message: "口令不正确。" });
+      return reply.code(401).send({ ok: false, message: "口令错误" });
     }
 
+    clearVerifyFailure(request, slug);
     incrementStat(batch.id, "passphrase_correct_count");
     incrementStat(batch.id, "unlock_count");
     recordPublicEvent(batch.id, "passphrase_correct", request);
     setUnlockCookie(reply, slug);
-    return { ok: true, batch: publicBatchInfo(batch), downloadUrl: `/api/public/batches/${slug}/download` };
+    return { ok: true, downloadUrl: `/api/public/claim/${slug}/download` };
   });
 
-  app.get("/api/public/batches/:slug/download", async (request, reply) => {
+  app.get("/api/public/claim/:slug/download", async (request, reply) => {
+    reply.header("X-Robots-Tag", "noindex, nofollow");
     const { slug } = request.params as { slug: string };
     const batch = getPublicBatch(slug);
-    if (!batch) {
-      return reply.code(404).send({ message: "领取批次不存在。" });
-    }
-    if (!isUnlocked(request, slug)) {
-      return reply.code(401).send({ message: "请先输入正确口令。" });
-    }
-    if (!allowDownload(request, slug)) {
-      return reply.code(429).send({ message: "下载过于频繁，请稍后再试。" });
-    }
+    if (!batch) return reply.code(404).send({ message: "领取已关闭" });
+    if (batch.requires_passphrase && !isUnlocked(request, slug)) return reply.code(401).send({ message: "请先输入正确口令" });
+    if (isTotalDownloadExceeded(batch)) return reply.code(429).send({ message: "下载次数已达上限" });
+    if (!allowDownload(request, batch)) return reply.code(429).send({ message: "请求过于频繁，请稍后再试" });
     if (!isPackagePathAllowed(batch.package_path) || !fs.existsSync(batch.package_path)) {
-      return reply.code(404).send({ message: "节点包不存在。" });
+      return reply.code(404).send({ message: "领取已关闭" });
     }
 
     incrementStat(batch.id, "download_count");
@@ -86,12 +95,11 @@ export function registerPublicClaimRoutes(app: FastifyInstance) {
     return reply.send(fs.createReadStream(batch.package_path));
   });
 
-  app.post("/api/public/batches/:slug/feedback", async (request, reply) => {
+  app.post("/api/public/claim/:slug/feedback", async (request, reply) => {
+    reply.header("X-Robots-Tag", "noindex, nofollow");
     const { slug } = request.params as { slug: string };
     const batch = getPublicBatch(slug);
-    if (!batch) {
-      return reply.code(404).send({ ok: false, message: "领取批次不存在。" });
-    }
+    if (!batch) return reply.code(404).send({ ok: false, message: "领取已关闭" });
 
     const body = z
       .object({
@@ -99,14 +107,19 @@ export function registerPublicClaimRoutes(app: FastifyInstance) {
         carrier: z.string().max(80).optional().default(""),
         device: z.string().max(80).optional().default(""),
         clientApp: z.string().max(80).optional().default(""),
+        issueType: z
+          .enum(["connection_failed", "high_latency", "youtube_stuck", "chatgpt_failed", "tiktok_failed", "partial_available", "all_failed", "import_help", "download_failed", "other"])
+          .optional()
+          .default("other"),
         isUsable: z.boolean().optional(),
-        note: z.string().max(1000).optional().default("")
+        note: z.string().max(200).optional().default("")
       })
       .parse(request.body);
 
+    const sourcePlatform = typeof request.query === "object" && request.query ? (request.query as { from?: string }).from : undefined;
     db.prepare(
-      `INSERT INTO feedback (batch_id, region, carrier, device, client_app, is_usable, note, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO feedback (batch_id, region, carrier, device, client_app, is_usable, issue_type, source_platform, note, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       batch.id,
       body.region,
@@ -114,6 +127,8 @@ export function registerPublicClaimRoutes(app: FastifyInstance) {
       body.device,
       body.clientApp,
       body.isUsable === undefined ? null : body.isUsable ? 1 : 0,
+      body.issueType,
+      sourcePlatform ?? null,
       body.note,
       new Date().toISOString()
     );
@@ -121,19 +136,22 @@ export function registerPublicClaimRoutes(app: FastifyInstance) {
     recordPublicEvent(batch.id, "feedback", request);
     return { ok: true };
   });
+
 }
 
 function getPublicBatch(slug: string) {
   const batch = db
     .prepare(
-      `SELECT id, batch_code, name, description, status, passphrase_hash, node_count,
-              package_path, public_slug, expires_at, created_at
+      `SELECT id, batch_code, name, description, status, passphrase_hash,
+              package_path, public_slug, requires_passphrase, allow_public_claim, expires_at, max_downloads,
+              ip_download_limit, wrong_passphrase_limit, created_at
        FROM export_batches
        WHERE public_slug = ?`
     )
     .get(slug) as BatchRow | undefined;
   if (!batch) return null;
   if (batch.status !== "published") return null;
+  if (!batch.allow_public_claim) return null;
   if (batch.expires_at && new Date(batch.expires_at).getTime() <= Date.now()) {
     db.prepare("UPDATE export_batches SET status = 'expired', updated_at = ? WHERE id = ?").run(new Date().toISOString(), batch.id);
     return null;
@@ -143,12 +161,9 @@ function getPublicBatch(slug: string) {
 
 function publicBatchInfo(batch: BatchRow) {
   return {
-    batchCode: batch.batch_code,
-    name: batch.name,
-    description: batch.description ?? "",
-    nodeCount: batch.node_count,
-    expiresAt: batch.expires_at ?? null,
-    createdAt: batch.created_at
+    title: batch.name || "节点包领取",
+    description: batch.description || "输入本期口令后即可领取节点包。",
+    expiresAt: batch.expires_at ?? null
   };
 }
 
@@ -193,31 +208,59 @@ function recordPublicEvent(batchId: number, eventType: string, request: FastifyR
   db.prepare(
     `INSERT INTO public_events (batch_id, event_type, source_platform, ip_hash, user_agent, created_at)
      VALUES (?, ?, ?, ?, ?, ?)`
-  ).run(
-    batchId,
-    eventType,
-    sourcePlatform ?? null,
-    hashIp(request.ip),
-    request.headers["user-agent"] ?? "",
-    new Date().toISOString()
-  );
+  ).run(batchId, eventType, sourcePlatform ?? null, hashIp(request.ip), request.headers["user-agent"] ?? "", new Date().toISOString());
 }
 
 function hashIp(ip: string) {
   return crypto.createHmac("sha256", config.SESSION_SECRET).update(ip).digest("hex");
 }
 
-function allowDownload(request: FastifyRequest, slug: string) {
-  const key = `${slug}:${hashIp(request.ip)}`;
+function allowVerify(request: FastifyRequest, slug: string, batch: BatchRow) {
+  const key = verifyKey(request, slug);
+  const now = Date.now();
+  const existing = verifyBuckets.get(key);
+  if (!existing || existing.resetAt <= now) return true;
+  if (existing.lockedUntil && existing.lockedUntil > now) return false;
+  return existing.wrongCount < (batch.wrong_passphrase_limit ?? 8);
+}
+
+function recordWrongPassphrase(request: FastifyRequest, slug: string, batch: BatchRow) {
+  const key = verifyKey(request, slug);
+  const now = Date.now();
+  const existing = verifyBuckets.get(key);
+  const wrongCount = existing && existing.resetAt > now ? existing.wrongCount + 1 : 1;
+  const limit = batch.wrong_passphrase_limit ?? 8;
+  verifyBuckets.set(key, {
+    wrongCount,
+    resetAt: now + 60 * 60 * 1000,
+    lockedUntil: wrongCount >= limit ? now + 15 * 60 * 1000 : undefined
+  });
+}
+
+function clearVerifyFailure(request: FastifyRequest, slug: string) {
+  verifyBuckets.delete(verifyKey(request, slug));
+}
+
+function verifyKey(request: FastifyRequest, slug: string) {
+  return `${slug}:${hashIp(request.ip)}:verify`;
+}
+
+function isTotalDownloadExceeded(batch: BatchRow) {
+  if (!batch.max_downloads) return false;
+  const row = db.prepare("SELECT download_count FROM batch_stats WHERE batch_id = ?").get(batch.id) as { download_count: number } | undefined;
+  return (row?.download_count ?? 0) >= batch.max_downloads;
+}
+
+function allowDownload(request: FastifyRequest, batch: BatchRow) {
+  const key = `${batch.public_slug}:${hashIp(request.ip)}:download`;
   const now = Date.now();
   const existing = downloadBuckets.get(key);
   if (!existing || existing.resetAt <= now) {
-    downloadBuckets.set(key, { count: 1, resetAt: now + 60_000 });
+    downloadBuckets.set(key, { count: 1, resetAt: now + 24 * 60 * 60 * 1000 });
     return true;
   }
-  if (existing.count >= config.DOWNLOAD_RATE_LIMIT_PER_MINUTE) {
-    return false;
-  }
+  const limit = Math.min(batch.ip_download_limit ?? 3, config.DOWNLOAD_RATE_LIMIT_PER_MINUTE);
+  if (existing.count >= limit) return false;
   existing.count += 1;
   return true;
 }

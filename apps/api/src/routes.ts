@@ -1,11 +1,15 @@
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import fs from "node:fs";
+import path from "node:path";
 import { requireAdmin } from "./auth.js";
 import { runCollection } from "./collector/collectionService.js";
+import { config } from "./config.js";
 import { db } from "./db.js";
-import { createExportBatch, createExportSchema, listExportBatches } from "./exporter/exportService.js";
+import { closeExportBatch, createExportBatch, createExportSchema, deleteDraftBatch, listExportBatches, publishExportBatch } from "./exporter/exportService.js";
 import { maskUrl, redactSensitiveText } from "./security/redact.js";
 import { isPublicVideoModeEnabled, setSetting } from "./settings.js";
 import { runNodeTests } from "./tester/testService.js";
+import { runXrayRealTests } from "./tester/xrayService.js";
 
 export function registerApiRoutes(app: FastifyInstance) {
   app.get("/health", async () => ({ ok: true, version: "1.0.0" }));
@@ -84,7 +88,9 @@ export function registerApiRoutes(app: FastifyInstance) {
     const items = db
       .prepare(
         `SELECT id, protocol, source_url, source_type, collected_at, last_tested_at,
-                latency_ms, status, failure_reason, exported_at, export_batch_id
+                latency_ms, real_latency_ms, real_status, real_tested_at, test_method,
+                success_count, failure_count, quality_tier, eligible_for_package,
+                status, failure_reason, exported_at, export_batch_id
          FROM nodes
          ${whereSql}
          ORDER BY CASE WHEN latency_ms IS NULL THEN 1 ELSE 0 END, latency_ms ASC, collected_at DESC
@@ -149,6 +155,17 @@ export function registerApiRoutes(app: FastifyInstance) {
     }
   });
 
+  app.post("/api/xray-test-runs", { preHandler: requireAdmin }, async (request, reply) => {
+    try {
+      const body = (request.body ?? {}) as { limit?: number };
+      const summary = await runXrayRealTests({ limit: clampNumber(Number(body.limit ?? 50), 1, 200) });
+      return { ok: true, summary };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "xray real test failed";
+      return reply.code(500).send({ ok: false, message });
+    }
+  });
+
   app.get("/api/export-batches", { preHandler: requireAdmin }, async () => {
     return { items: listExportBatches() };
   });
@@ -160,6 +177,39 @@ export function registerApiRoutes(app: FastifyInstance) {
       return { ok: true, batch };
     } catch (error) {
       const message = error instanceof Error ? error.message : "export failed";
+      return reply.code(400).send({ ok: false, message });
+    }
+  });
+
+  app.post("/api/export-batches/:id/publish", { preHandler: requireAdmin }, async (request, reply) => {
+    try {
+      const { id } = request.params as { id: string };
+      publishExportBatch(Number(id));
+      return { ok: true };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "publish failed";
+      return reply.code(400).send({ ok: false, message });
+    }
+  });
+
+  app.post("/api/export-batches/:id/close", { preHandler: requireAdmin }, async (request, reply) => {
+    try {
+      const { id } = request.params as { id: string };
+      closeExportBatch(Number(id));
+      return { ok: true };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "close failed";
+      return reply.code(400).send({ ok: false, message });
+    }
+  });
+
+  app.delete("/api/export-batches/:id", { preHandler: requireAdmin }, async (request, reply) => {
+    try {
+      const { id } = request.params as { id: string };
+      deleteDraftBatch(Number(id));
+      return { ok: true };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "delete failed";
       return reply.code(400).send({ ok: false, message });
     }
   });
@@ -204,12 +254,36 @@ export function registerApiRoutes(app: FastifyInstance) {
     };
   });
 
+  app.get("/api/stats/channels", { preHandler: requireAdmin }, async () => {
+    return {
+      items: db
+        .prepare(
+          `SELECT COALESCE(source_platform, 'direct') AS source_platform,
+                  SUM(CASE WHEN event_type = 'view' THEN 1 ELSE 0 END) AS view_count,
+                  SUM(CASE WHEN event_type = 'passphrase_attempt' THEN 1 ELSE 0 END) AS passphrase_attempt_count,
+                  SUM(CASE WHEN event_type = 'passphrase_wrong' THEN 1 ELSE 0 END) AS passphrase_wrong_count,
+                  SUM(CASE WHEN event_type = 'passphrase_correct' THEN 1 ELSE 0 END) AS passphrase_correct_count,
+                  SUM(CASE WHEN event_type = 'download' THEN 1 ELSE 0 END) AS download_count,
+                  (SELECT COUNT(*) FROM feedback WHERE COALESCE(feedback.source_platform, 'direct') = COALESCE(public_events.source_platform, 'direct')) AS feedback_count,
+                  (SELECT COUNT(*) FROM feedback WHERE COALESCE(feedback.source_platform, 'direct') = COALESCE(public_events.source_platform, 'direct') AND is_usable = 0) AS unusable_feedback_count,
+                  MAX(created_at) AS last_seen_at
+           FROM public_events
+           GROUP BY COALESCE(source_platform, 'direct')
+           ORDER BY view_count DESC
+           LIMIT 50`
+        )
+        .all()
+    };
+  });
+
   app.get("/api/feedback", { preHandler: requireAdmin }, async () => {
     return {
       items: db
         .prepare(
           `SELECT feedback.id, export_batches.batch_code, feedback.region, feedback.carrier,
-                  feedback.device, feedback.client_app, feedback.is_usable, feedback.note, feedback.created_at
+                  feedback.device, feedback.client_app, feedback.is_usable, feedback.issue_type,
+                  feedback.source_platform, feedback.process_status, feedback.process_note,
+                  feedback.note, feedback.created_at
            FROM feedback
            LEFT JOIN export_batches ON export_batches.id = feedback.batch_id
            ORDER BY feedback.id DESC
@@ -217,6 +291,25 @@ export function registerApiRoutes(app: FastifyInstance) {
         )
         .all()
     };
+  });
+
+  app.patch("/api/feedback/:id", { preHandler: requireAdmin }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const body = (request.body ?? {}) as { processStatus?: string; processNote?: string };
+    const allowedStatus = new Set(["pending", "viewed", "resolved", "invalid", "regenerate"]);
+    const processStatus = String(body.processStatus ?? "").trim();
+    const processNote = body.processNote ? String(body.processNote).trim().slice(0, 200) : null;
+
+    if (!allowedStatus.has(processStatus)) {
+      return reply.status(400).send({ message: "处理状态无效" });
+    }
+
+    const result = db
+      .prepare("UPDATE feedback SET process_status = ?, process_note = ? WHERE id = ?")
+      .run(processStatus, processNote, Number(id));
+    if (!result.changes) return reply.status(404).send({ message: "反馈不存在" });
+
+    return { ok: true };
   });
 
   app.get("/api/settings/video-mode", { preHandler: requireAdmin }, async () => {
@@ -227,6 +320,79 @@ export function registerApiRoutes(app: FastifyInstance) {
     const body = (request.body ?? {}) as { enabled?: boolean };
     setSetting("public_video_mode", body.enabled ? "true" : "false");
     return { enabled: Boolean(body.enabled) };
+  });
+
+  app.get("/api/automation/packages", { preHandler: requireAutomationToken }, async () => {
+    return { items: automationPackages() };
+  });
+
+  app.get("/api/automation/current-package", { preHandler: requireAutomationToken }, async () => {
+    return { item: automationPackages()[0] ?? null };
+  });
+
+  app.get("/api/automation/packages/:id/download", { preHandler: requireAutomationToken }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const batch = db
+      .prepare(
+        `SELECT id, batch_code, package_path, allow_hermes_file
+         FROM export_batches
+         WHERE id = ? AND status = 'published' AND allow_automation = 1 AND allow_hermes_file = 1`
+      )
+      .get(Number(id)) as { id: number; batch_code: string; package_path: string; allow_hermes_file: number } | undefined;
+    if (!batch || !isExportPathAllowed(batch.package_path) || !fs.existsSync(batch.package_path)) {
+      return reply.code(404).send({ message: "文件不可用" });
+    }
+    reply.header("Content-Type", "application/zip");
+    reply.header("Content-Disposition", `attachment; filename="${encodeURIComponent(batch.batch_code)}.zip"`);
+    return reply.send(fs.createReadStream(batch.package_path));
+  });
+
+  app.get("/api/automation/channel-links", { preHandler: requireAutomationToken }, async () => {
+    const current = automationPackages()[0];
+    if (!current) return { items: [] };
+    const channels = ["youtube", "telegram", "facebook", "x", "tiktok"];
+    return {
+      items: channels.map((channel) => ({
+        channel,
+        claimUrl: current.allow_hermes_link ? `${config.PUBLIC_BASE_URL}/r/${current.public_slug}?from=${channel}` : null,
+        qualityTier: current.quality_tier,
+        expiresAt: current.expires_at
+      }))
+    };
+  });
+
+  app.get("/api/automation/daily-summary", { preHandler: requireAutomationToken }, async () => {
+    const current = automationPackages()[0];
+    if (!current) return { title: "今日免费节点暂未更新", summaryText: "当前没有允许自动化读取的已发布节点包。", recommendedClients: [] };
+    const claimUrl = current.allow_hermes_link ? `${config.PUBLIC_BASE_URL}/r/${current.public_slug}` : null;
+    return {
+      title: "今日免费节点已更新",
+      summaryText: `今日免费节点已更新\n\n节点包类型：${qualityTierName(current.quality_tier)}\n推荐客户端：v2rayN / Clash Verge / Shadowrocket\n领取地址：${claimUrl ?? "请到公开领取页查看"}`,
+      claimUrl,
+      fileDownloadUrl: current.allow_hermes_file ? `${config.PUBLIC_BASE_URL}/api/automation/packages/${current.id}/download` : null,
+      packageQuality: current.quality_tier,
+      latencyRange: qualityTierRange(current.quality_tier),
+      nodeCount: current.node_count,
+      expiresAt: current.expires_at,
+      recommendedClients: ["v2rayN", "Clash Verge", "Shadowrocket", "sing-box"],
+      notice: "免费节点存在时效性，部分节点失效属于正常情况，请以实际使用为准。"
+    };
+  });
+
+  app.get("/api/automation/stats-summary", { preHandler: requireAutomationToken }, async () => {
+    return {
+      packages: automationPackages().length,
+      channels: db
+        .prepare(
+          `SELECT COALESCE(source_platform, 'direct') AS source_platform,
+                  COUNT(*) AS event_count,
+                  SUM(CASE WHEN event_type = 'download' THEN 1 ELSE 0 END) AS download_count
+           FROM public_events
+           GROUP BY COALESCE(source_platform, 'direct')
+           ORDER BY event_count DESC`
+        )
+        .all()
+    };
   });
 }
 
@@ -241,6 +407,62 @@ function sumCounts(rows: Array<{ count: number }>) {
 function clampNumber(value: number, min: number, max: number) {
   if (!Number.isFinite(value)) return min;
   return Math.max(min, Math.min(max, Math.trunc(value)));
+}
+
+function requireAutomationToken(request: FastifyRequest, reply: FastifyReply, done: (error?: Error) => void) {
+  if (!config.AUTOMATION_API_TOKEN) {
+    reply.code(503).send({ message: "自动化接口未启用" });
+    return;
+  }
+  const header = request.headers.authorization ?? request.headers["x-api-token"];
+  const token = String(header ?? "").replace(/^Bearer\s+/i, "");
+  if (token !== config.AUTOMATION_API_TOKEN) {
+    reply.code(401).send({ message: "自动化 Token 无效" });
+    return;
+  }
+  done();
+}
+
+function automationPackages() {
+  return db
+    .prepare(
+      `SELECT id, name, status, node_count, public_slug, quality_tier, expires_at,
+              allow_automation, allow_direct_download, allow_hermes_file, allow_hermes_link,
+              max_downloads, ip_download_limit, created_at, updated_at
+       FROM export_batches
+       WHERE status = 'published'
+         AND allow_automation = 1
+         AND (expires_at IS NULL OR expires_at > ?)
+         AND (quality_tier IS NULL OR quality_tier != 'high' OR (allow_hermes_file = 1 OR allow_hermes_link = 1))
+       ORDER BY published_at DESC, id DESC
+       LIMIT 20`
+    )
+    .all(new Date().toISOString()) as Array<Record<string, any>>;
+}
+
+function qualityTierName(value?: string | null) {
+  const names: Record<string, string> = {
+    high: "高质量节点包",
+    premium: "普通优质节点包",
+    community: "社群福利节点包",
+    backup: "备用节点包"
+  };
+  return value ? names[value] ?? value : "普通福利包";
+}
+
+function qualityTierRange(value?: string | null) {
+  const ranges: Record<string, string> = {
+    high: "0-100ms",
+    premium: "100-200ms",
+    community: "200-300ms",
+    backup: "300ms 以上"
+  };
+  return value ? ranges[value] ?? null : null;
+}
+
+function isExportPathAllowed(filePath: string) {
+  const resolved = path.resolve(filePath);
+  return resolved.startsWith(config.EXPORT_DIR + path.sep);
 }
 
 function latencyDistribution() {

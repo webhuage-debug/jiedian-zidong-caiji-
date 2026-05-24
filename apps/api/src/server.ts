@@ -18,7 +18,12 @@ const app = Fastify({
 await app.register(cookie, { secret: config.SESSION_SECRET });
 await app.register(rateLimit, {
   max: 120,
-  timeWindow: "1 minute"
+  timeWindow: "1 minute",
+  errorResponseBuilder: () => ({
+    statusCode: 429,
+    error: "Too Many Requests",
+    message: "请求过于频繁，请 1 分钟后再试"
+  })
 });
 
 registerAuthRoutes(app);
@@ -34,6 +39,9 @@ await app.register(fastifyStatic, {
 app.setNotFoundHandler((request, reply) => {
   if (request.url.startsWith("/api/")) {
     return reply.code(404).send({ message: "接口不存在。" });
+  }
+  if (request.url.startsWith("/r/") || request.url.startsWith("/claim/")) {
+    reply.header("X-Robots-Tag", "noindex, nofollow");
   }
   return reply.sendFile("index.html");
 });

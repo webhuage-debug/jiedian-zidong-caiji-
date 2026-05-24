@@ -19,6 +19,7 @@ import {
   ScrollText,
   Settings,
   ShieldCheck,
+  Trash2,
   Video
 } from "lucide-react";
 import "./styles.css";
@@ -66,6 +67,13 @@ type NodeItem = {
   collected_at?: string;
   last_tested_at?: string;
   latency_ms?: number;
+  real_latency_ms?: number;
+  real_status?: string;
+  real_tested_at?: string;
+  test_method?: string;
+  success_count?: number;
+  failure_count?: number;
+  quality_tier?: string;
   status: string;
   failure_reason?: string;
   exported_at?: string;
@@ -79,6 +87,21 @@ type ExportBatch = {
   status: string;
   node_count: number;
   public_slug: string;
+  quality_tier?: string | null;
+  requires_passphrase?: number;
+  allow_public_claim?: number;
+  allow_automation?: number;
+  allow_direct_download?: number;
+  allow_hermes_file?: number;
+  allow_hermes_link?: number;
+  last_tested_at?: string | null;
+  test_method?: string | null;
+  pass_rate?: number | null;
+  expires_at?: string | null;
+  max_downloads?: number | null;
+  ip_download_limit?: number | null;
+  wrong_passphrase_limit?: number | null;
+  created_at?: string;
 };
 
 type SourceItem = {
@@ -107,6 +130,18 @@ type BatchStat = {
   feedback_count?: number;
 };
 
+type ChannelStat = {
+  source_platform: string;
+  view_count?: number;
+  passphrase_attempt_count?: number;
+  passphrase_wrong_count?: number;
+  passphrase_correct_count?: number;
+  download_count?: number;
+  feedback_count?: number;
+  unusable_feedback_count?: number;
+  last_seen_at?: string;
+};
+
 type FeedbackItem = {
   id: number;
   batch_code?: string;
@@ -115,6 +150,10 @@ type FeedbackItem = {
   device?: string;
   client_app?: string;
   is_usable?: number | null;
+  issue_type?: string;
+  source_platform?: string;
+  process_status?: string;
+  process_note?: string;
   note?: string;
   created_at?: string;
 };
@@ -126,10 +165,31 @@ type LogItem = {
 };
 
 type PublicBatch = {
-  name: string;
+  title: string;
   description: string;
   expiresAt?: string | null;
-  createdAt: string;
+};
+
+type ExportFormState = {
+  name: string;
+  count: number;
+  maxLatencyMs: string;
+  passphrase: string;
+  minLatencyMs: string;
+  protocol: string;
+  qualityTier: string;
+  realOnly: boolean;
+  requiresPassphrase: boolean;
+  allowPublicClaim: boolean;
+  allowAutomation: boolean;
+  allowDirectDownload: boolean;
+  allowHermesFile: boolean;
+  allowHermesLink: boolean;
+  publish: boolean;
+  expiresAt: string;
+  maxDownloads: string;
+  ipDownloadLimit: number;
+  wrongPassphraseLimit: number;
 };
 
 type ViewKey =
@@ -142,6 +202,7 @@ type ViewKey =
   | "claim"
   | "stats"
   | "feedback"
+  | "automation"
   | "settings"
   | "logs";
 
@@ -155,9 +216,107 @@ const navItems: Array<{ key: ViewKey; label: string; icon: React.ReactNode }> = 
   { key: "claim", label: "领取页管理", icon: <Link2 size={17} /> },
   { key: "stats", label: "统计数据", icon: <BarChart3 size={17} /> },
   { key: "feedback", label: "反馈数据", icon: <MessageSquare size={17} /> },
+  { key: "automation", label: "自动化接口", icon: <Link2 size={17} /> },
   { key: "settings", label: "系统设置", icon: <Settings size={17} /> },
   { key: "logs", label: "运行日志", icon: <ScrollText size={17} /> }
 ];
+
+const statusText: Record<string, string> = {
+  pending: "等待中",
+  pending_test: "待测试",
+  running: "进行中",
+  completed: "已完成",
+  failed: "失败",
+  test_passed: "测试通过",
+  test_failed: "测试不通过",
+  exported: "已导出",
+  removed: "已剔除",
+  success: "成功",
+  timeout: "连接超时",
+  cancelled: "已取消",
+  draft: "草稿",
+  published: "已发布",
+  closed: "已关闭",
+  expired: "已过期",
+  replaced: "已替换",
+  available: "可用",
+  unavailable: "不可用",
+  real_passed: "真实可用",
+  real_failed: "真实检测失败",
+  xray_not_configured: "Xray 未配置",
+  xray_unsupported_protocol: "协议暂不支持",
+  xray_converter_pending: "转换器待完善"
+};
+
+const qualityText: Record<string, string> = {
+  high: "高质量节点包",
+  premium: "普通优质节点包",
+  community: "社群福利节点包",
+  backup: "备用节点包"
+};
+
+const failureText: Record<string, string> = {
+  timeout: "连接超时",
+  connection_failed: "连接失败",
+  tcp_failed: "TCP 连接失败",
+  test_failed: "测试不通过",
+  invalid_config: "配置无效",
+  protocol_error: "协议错误",
+  dns_failed: "DNS 解析失败",
+  proxy_failed: "代理访问失败",
+  parse_failed: "解析失败",
+  unsupported_protocol: "协议暂不支持",
+  xray_not_configured: "Xray 未配置",
+  xray_probe_failed: "Xray 启动检查失败",
+  xray_converter_pending: "Xray 转换器待完善",
+  unknown: "未知原因"
+};
+
+const issueText: Record<string, string> = {
+  connection_failed: "无法连接",
+  high_latency: "延迟太高",
+  youtube_stuck: "YouTube 卡顿",
+  chatgpt_failed: "ChatGPT 打不开",
+  tiktok_failed: "TikTok 不通",
+  partial_available: "部分节点可用",
+  all_failed: "全部不可用",
+  import_help: "不会导入",
+  download_failed: "下载失败",
+  other: "其他问题"
+};
+
+const processText: Record<string, string> = {
+  pending: "未处理",
+  viewed: "已查看",
+  resolved: "已解决",
+  invalid: "无效反馈",
+  regenerate: "需要重新生成节点包"
+};
+
+function zhStatus(value?: string | null) {
+  if (!value) return "-";
+  return statusText[value] ?? value;
+}
+
+function zhFailure(value?: string | null) {
+  if (!value) return "-";
+  return failureText[value] ?? value;
+}
+
+function zhIssue(value?: string | null) {
+  if (!value) return "-";
+  return issueText[value] ?? value;
+}
+
+function zhProcess(value?: string | null) {
+  if (!value) return "未处理";
+  return processText[value] ?? value;
+}
+
+function zhQuality(value?: string | null) {
+  if (!value) return "未分档";
+  return qualityText[value] ?? value;
+}
 
 function apiFetch(input: RequestInfo | URL, init: RequestInit = {}) {
   return fetch(input, {
@@ -167,7 +326,7 @@ function apiFetch(input: RequestInfo | URL, init: RequestInit = {}) {
 }
 
 function App() {
-  const publicMatch = window.location.pathname.match(/^\/p\/([^/]+)/);
+  const publicMatch = window.location.pathname.match(/^\/(?:p|r)\/([^/]+)/);
   if (publicMatch) return <PublicClaimPage slug={publicMatch[1]} />;
   return <AdminApp />;
 }
@@ -259,6 +418,7 @@ function Dashboard({ user, onLogout }: { user: { username: string }; onLogout: (
   const [failedNodes, setFailedNodes] = React.useState<NodeItem[]>([]);
   const [batches, setBatches] = React.useState<ExportBatch[]>([]);
   const [stats, setStats] = React.useState<BatchStat[]>([]);
+  const [channelStats, setChannelStats] = React.useState<ChannelStat[]>([]);
   const [feedback, setFeedback] = React.useState<FeedbackItem[]>([]);
   const [logs, setLogs] = React.useState<LogItem[]>([]);
   const [videoMode, setVideoMode] = React.useState(false);
@@ -275,9 +435,23 @@ function Dashboard({ user, onLogout }: { user: { username: string }; onLogout: (
   const [exportForm, setExportForm] = React.useState({
     name: "本期候选节点",
     count: 10,
+    minLatencyMs: "",
     maxLatencyMs: "",
+    protocol: "",
+    qualityTier: "",
+    realOnly: false,
     passphrase: "",
-    publish: true
+    requiresPassphrase: true,
+    allowPublicClaim: true,
+    allowAutomation: false,
+    allowDirectDownload: false,
+    allowHermesFile: false,
+    allowHermesLink: false,
+    publish: false,
+    expiresAt: "",
+    maxDownloads: "",
+    ipDownloadLimit: 3,
+    wrongPassphraseLimit: 8
   });
 
   const refresh = React.useCallback(async () => {
@@ -297,6 +471,7 @@ function Dashboard({ user, onLogout }: { user: { username: string }; onLogout: (
       batchesRes,
       videoModeRes,
       statsRes,
+      channelStatsRes,
       feedbackRes,
       logsRes
     ] = await Promise.all([
@@ -309,6 +484,7 @@ function Dashboard({ user, onLogout }: { user: { username: string }; onLogout: (
       apiFetch("/api/export-batches"),
       apiFetch("/api/settings/video-mode"),
       apiFetch("/api/stats/batches"),
+      apiFetch("/api/stats/channels"),
       apiFetch("/api/feedback"),
       apiFetch("/api/logs")
     ]);
@@ -321,6 +497,7 @@ function Dashboard({ user, onLogout }: { user: { username: string }; onLogout: (
     setBatches((await batchesRes.json()).items ?? []);
     setVideoMode(Boolean((await videoModeRes.json()).enabled));
     setStats((await statsRes.json()).items ?? []);
+    setChannelStats((await channelStatsRes.json()).items ?? []);
     setFeedback((await feedbackRes.json()).items ?? []);
     setLogs((await logsRes.json()).items ?? []);
   }, [nodeFilters]);
@@ -366,9 +543,31 @@ function Dashboard({ user, onLogout }: { user: { username: string }; onLogout: (
     await refresh();
   }
 
+  async function runXrayTester() {
+    setTesting(true);
+    setNotice("Xray-core 真实检测已加入队列。默认低并发执行，只检测基础测试通过的候选节点。");
+    const res = await apiFetch("/api/xray-test-runs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ limit: 50 })
+    });
+    const data = await res.json();
+    setTesting(false);
+    if (!res.ok) {
+      setNotice(data.message ?? "Xray-core 真实检测失败");
+      return;
+    }
+    if (!data.summary.configured) {
+      setNotice("Xray-core 未启用或未配置路径，本次只记录跳过状态，没有启动临时代理。");
+    } else {
+      setNotice(`Xray-core 检测完成：检测 ${data.summary.checkedNodes} 条，真实可用 ${data.summary.realPassedNodes} 条。`);
+    }
+    await refresh();
+  }
+
   async function createExport(event: React.FormEvent) {
     event.preventDefault();
-    if (!exportForm.passphrase.trim()) {
+    if (exportForm.requiresPassphrase && !exportForm.passphrase.trim()) {
       setNotice("请先填写本期口令，口令会同时用于领取页验证和 zip 解压。");
       return;
     }
@@ -380,9 +579,23 @@ function Dashboard({ user, onLogout }: { user: { username: string }; onLogout: (
       body: JSON.stringify({
         name: exportForm.name,
         count: Number(exportForm.count),
+        minLatencyMs: exportForm.minLatencyMs ? Number(exportForm.minLatencyMs) : undefined,
         maxLatencyMs: exportForm.maxLatencyMs ? Number(exportForm.maxLatencyMs) : undefined,
+        protocol: exportForm.protocol || undefined,
+        qualityTier: exportForm.qualityTier || undefined,
+        realOnly: exportForm.realOnly,
         passphrase: exportForm.passphrase,
-        publish: exportForm.publish,
+        requiresPassphrase: exportForm.requiresPassphrase,
+        allowPublicClaim: exportForm.allowPublicClaim,
+        allowAutomation: exportForm.allowAutomation,
+        allowDirectDownload: exportForm.allowDirectDownload,
+        allowHermesFile: exportForm.allowHermesFile,
+        allowHermesLink: exportForm.allowHermesLink,
+        publish: false,
+        expiresAt: exportForm.expiresAt ? new Date(exportForm.expiresAt).toISOString() : undefined,
+        maxDownloads: exportForm.maxDownloads ? Number(exportForm.maxDownloads) : undefined,
+        ipDownloadLimit: Number(exportForm.ipDownloadLimit),
+        wrongPassphraseLimit: Number(exportForm.wrongPassphraseLimit),
         sort: "latency_asc",
         includeExported: false
       })
@@ -393,7 +606,7 @@ function Dashboard({ user, onLogout }: { user: { username: string }; onLogout: (
       setNotice(data.message === "no eligible nodes for export" ? "没有符合条件的已通过节点，请先运行基础测试或放宽最大延迟。" : data.message ?? "导出失败");
       return;
     }
-    setNotice(`节点包已生成：${data.batch.batchCode}，数量 ${data.batch.nodeCount} 条。`);
+    setNotice(`节点包已生成草稿：${data.batch.batchCode}，数量 ${data.batch.nodeCount} 条。点击“发布此批次”后粉丝才能领取。`);
     setActiveView("packages");
     setExportForm((value) => ({ ...value, passphrase: "" }));
     await refresh();
@@ -406,6 +619,58 @@ function Dashboard({ user, onLogout }: { user: { username: string }; onLogout: (
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ enabled: next })
     });
+    await refresh();
+  }
+
+  async function publishBatch(batch: ExportBatch) {
+    setNotice(`正在发布批次 ${batch.batch_code}，旧的公开批次会自动标记为已替换。`);
+    const res = await apiFetch(`/api/export-batches/${batch.id}/publish`, { method: "POST" });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setNotice(data.message ?? "发布失败");
+      return;
+    }
+    setNotice(`批次 ${batch.batch_code} 已发布，公开领取页现在可用。`);
+    await refresh();
+  }
+
+  async function closeBatch(batch: ExportBatch) {
+    setNotice(`正在关闭批次 ${batch.batch_code}...`);
+    const res = await apiFetch(`/api/export-batches/${batch.id}/close`, { method: "POST" });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setNotice(data.message ?? "关闭失败");
+      return;
+    }
+    setNotice(`批次 ${batch.batch_code} 已关闭。`);
+    await refresh();
+  }
+
+  async function deleteDraft(batch: ExportBatch) {
+    setNotice(`正在删除草稿 ${batch.batch_code}...`);
+    const res = await apiFetch(`/api/export-batches/${batch.id}`, { method: "DELETE" });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setNotice(data.message ?? "删除失败");
+      return;
+    }
+    setNotice(`草稿 ${batch.batch_code} 已删除。`);
+    await refresh();
+  }
+
+  async function updateFeedbackStatus(item: FeedbackItem, processStatus: string) {
+    setNotice("正在更新反馈处理状态...");
+    const res = await apiFetch(`/api/feedback/${item.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ processStatus })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setNotice(data.message ?? "反馈状态更新失败");
+      return;
+    }
+    setNotice("反馈处理状态已更新。");
     await refresh();
   }
 
@@ -453,7 +718,7 @@ function Dashboard({ user, onLogout }: { user: { username: string }; onLogout: (
             <Metrics summary={summary} />
             <LatencyDistribution summary={summary} />
             <NodePreview title="低延迟候选节点预览" nodes={nodes.slice(0, 8)} />
-            <BatchTable batches={batches} compact />
+            <BatchTable batches={batches} compact videoMode={videoMode} onPublish={publishBatch} onClose={closeBatch} onDeleteDraft={deleteDraft} />
           </>
         )}
 
@@ -471,7 +736,7 @@ function Dashboard({ user, onLogout }: { user: { username: string }; onLogout: (
         )}
 
         {activeView === "tests" && (
-          <TestPanel runs={testRuns} testing={testing} onRun={runTester} />
+          <TestPanel runs={testRuns} testing={testing} onRun={runTester} onRunXray={runXrayTester} />
         )}
 
         {activeView === "failed" && (
@@ -479,19 +744,23 @@ function Dashboard({ user, onLogout }: { user: { username: string }; onLogout: (
         )}
 
         {activeView === "packages" && (
-          <ExportPanel form={exportForm} setForm={setExportForm} exporting={exporting} onSubmit={createExport} batches={batches} />
+          <ExportPanel form={exportForm} setForm={setExportForm} exporting={exporting} onSubmit={createExport} batches={batches} videoMode={videoMode} onPublish={publishBatch} onClose={closeBatch} onDeleteDraft={deleteDraft} />
         )}
 
         {activeView === "claim" && (
-          <ClaimPanel batches={batches} />
+          <ClaimPanel batches={batches} videoMode={videoMode} onPublish={publishBatch} onClose={closeBatch} onDeleteDraft={deleteDraft} />
         )}
 
         {activeView === "stats" && (
-          <StatsPanel stats={stats} />
+          <StatsPanel stats={stats} channelStats={channelStats} />
         )}
 
         {activeView === "feedback" && (
-          <FeedbackPanel feedback={feedback} />
+          <FeedbackPanel feedback={feedback} onStatusChange={updateFeedbackStatus} />
+        )}
+
+        {activeView === "automation" && (
+          <AutomationPanel batches={batches} videoMode={videoMode} />
         )}
 
         {activeView === "settings" && (
@@ -613,7 +882,7 @@ function CollectionPanel({
   );
 }
 
-function TestPanel({ runs, testing, onRun }: { runs: TestRun[]; testing: boolean; onRun: () => void }) {
+function TestPanel({ runs, testing, onRun, onRunXray }: { runs: TestRun[]; testing: boolean; onRun: () => void; onRunXray: () => void }) {
   return (
     <section className="panel">
       <div className="panel-title">
@@ -621,11 +890,18 @@ function TestPanel({ runs, testing, onRun }: { runs: TestRun[]; testing: boolean
           <h2>基础测试</h2>
           <p className="muted compact">只做后台初筛 TCP 连通性测试，失败节点不进入候选池。</p>
         </div>
-        <button className="primary small" onClick={onRun} disabled={testing}>
-          <Activity size={16} />
-          {testing ? "测试中..." : "开始测试"}
-        </button>
+        <div className="row-actions">
+          <button className="primary small" onClick={onRun} disabled={testing}>
+            <Activity size={16} />
+            {testing ? "测试中..." : "开始基础测试"}
+          </button>
+          <button className="icon" onClick={onRunXray} disabled={testing}>
+            <Activity size={16} />
+            Xray 真实检测
+          </button>
+        </div>
       </div>
+      <div className="notice">Xray-core 真实检测默认关闭，必须在 VPS 配置内核路径后才会执行。临时代理只允许监听 127.0.0.1，低并发运行。</div>
       <TestRunTable runs={runs} />
     </section>
   );
@@ -636,22 +912,33 @@ function ExportPanel({
   setForm,
   exporting,
   onSubmit,
-  batches
+  batches,
+  videoMode,
+  onPublish,
+  onClose,
+  onDeleteDraft
 }: {
-  form: { name: string; count: number; maxLatencyMs: string; passphrase: string; publish: boolean };
-  setForm: React.Dispatch<React.SetStateAction<{ name: string; count: number; maxLatencyMs: string; passphrase: string; publish: boolean }>>;
+  form: ExportFormState;
+  setForm: React.Dispatch<React.SetStateAction<ExportFormState>>;
   exporting: boolean;
   onSubmit: (event: React.FormEvent) => void;
   batches: ExportBatch[];
+  videoMode: boolean;
+  onPublish: (batch: ExportBatch) => void;
+  onClose: (batch: ExportBatch) => void;
+  onDeleteDraft: (batch: ExportBatch) => void;
 }) {
+  const currentBatch = batches.find((batch) => batch.status === "published");
+  const drafts = batches.filter((batch) => batch.status === "draft");
   return (
     <section className="panel">
       <div className="panel-title">
         <div>
           <h2>节点包导出</h2>
-          <p className="muted compact">默认导出 10 条，可手动改成 11、20、30 或自定义数量。导出优先选择测试通过且延迟最低的节点。</p>
+          <p className="muted compact">生成节点包后默认是草稿，不会公开。只有手动发布后，粉丝才能通过公开领取页下载。</p>
         </div>
       </div>
+      <div className="notice">安全提示：生成节点包 ≠ 公开发布。误触生成的包只会留在草稿，不会影响当前粉丝领取页。</div>
       <form className="export-form" onSubmit={onSubmit}>
         <label>
           批次名称
@@ -662,91 +949,279 @@ function ExportPanel({
           <input type="number" min="1" max="1000" value={form.count} onChange={(event) => setForm((value) => ({ ...value, count: Number(event.target.value) }))} />
         </label>
         <label>
+          最小延迟 ms
+          <input placeholder="例如 100" value={form.minLatencyMs} onChange={(event) => setForm((value) => ({ ...value, minLatencyMs: event.target.value }))} />
+        </label>
+        <label>
           最大延迟 ms
           <input placeholder="例如 300" value={form.maxLatencyMs} onChange={(event) => setForm((value) => ({ ...value, maxLatencyMs: event.target.value }))} />
         </label>
         <label>
+          协议筛选
+          <select value={form.protocol} onChange={(event) => setForm((value) => ({ ...value, protocol: event.target.value }))}>
+            <option value="">全部协议</option>
+            <option value="vless">VLESS</option>
+            <option value="vmess">VMess</option>
+            <option value="trojan">Trojan</option>
+            <option value="ss">Shadowsocks</option>
+          </select>
+        </label>
+        <label>
+          节点包档位
+          <select value={form.qualityTier} onChange={(event) => setForm((value) => ({ ...value, qualityTier: event.target.value }))}>
+            <option value="">自动判断</option>
+            <option value="high">0-100ms 高质量包</option>
+            <option value="premium">100-200ms 普通优质包</option>
+            <option value="community">200-300ms 社群福利包</option>
+            <option value="backup">300ms 以上备用包</option>
+          </select>
+        </label>
+        <label>
           本期口令
-          <input type="password" value={form.passphrase} onChange={(event) => setForm((value) => ({ ...value, passphrase: event.target.value }))} required />
+          <input type="password" value={form.passphrase} onChange={(event) => setForm((value) => ({ ...value, passphrase: event.target.value }))} required={form.requiresPassphrase} />
+        </label>
+        <label>
+          有效期
+          <input type="datetime-local" value={form.expiresAt} onChange={(event) => setForm((value) => ({ ...value, expiresAt: event.target.value }))} />
+        </label>
+        <label>
+          总下载上限
+          <input placeholder="长期可留空" value={form.maxDownloads} onChange={(event) => setForm((value) => ({ ...value, maxDownloads: event.target.value }))} />
+        </label>
+        <label>
+          单 IP 下载
+          <input type="number" min="1" max="100" value={form.ipDownloadLimit} onChange={(event) => setForm((value) => ({ ...value, ipDownloadLimit: Number(event.target.value) }))} />
+        </label>
+        <label>
+          错误口令上限
+          <input type="number" min="1" max="100" value={form.wrongPassphraseLimit} onChange={(event) => setForm((value) => ({ ...value, wrongPassphraseLimit: Number(event.target.value) }))} />
         </label>
         <label className="check-row">
-          <input type="checkbox" checked={form.publish} onChange={(event) => setForm((value) => ({ ...value, publish: event.target.checked }))} />
-          发布领取页
+          <input type="checkbox" checked={form.realOnly} onChange={(event) => setForm((value) => ({ ...value, realOnly: event.target.checked }))} />
+          只选择 Xray 真实检测通过节点
+        </label>
+        <label className="check-row">
+          <input type="checkbox" checked={form.requiresPassphrase} onChange={(event) => setForm((value) => ({ ...value, requiresPassphrase: event.target.checked }))} />
+          需要口令
+        </label>
+        <label className="check-row">
+          <input type="checkbox" checked={form.allowPublicClaim} onChange={(event) => setForm((value) => ({ ...value, allowPublicClaim: event.target.checked }))} />
+          允许公开领取页
+        </label>
+        <label className="check-row">
+          <input type="checkbox" checked={form.allowAutomation} onChange={(event) => setForm((value) => ({ ...value, allowAutomation: event.target.checked }))} />
+          允许 Hermes / OpenClaw 自动化读取
+        </label>
+        <label className="check-row">
+          <input type="checkbox" checked={form.allowHermesLink} onChange={(event) => setForm((value) => ({ ...value, allowHermesLink: event.target.checked }))} />
+          允许自动化读取领取链接
+        </label>
+        <label className="check-row">
+          <input type="checkbox" checked={form.allowHermesFile} onChange={(event) => setForm((value) => ({ ...value, allowHermesFile: event.target.checked }))} />
+          允许自动化下载文件
+        </label>
+        <label className="check-row">
+          <input type="checkbox" checked={false} readOnly />
+          生成后保持草稿
         </label>
         <button className="primary small" disabled={exporting}>
           <FileArchive size={16} />
           {exporting ? "生成中..." : "生成节点包"}
         </button>
       </form>
-      <BatchTable batches={batches} />
+      <h3>当前发布批次</h3>
+      <BatchTable batches={currentBatch ? [currentBatch] : []} videoMode={videoMode} onPublish={onPublish} onClose={onClose} onDeleteDraft={onDeleteDraft} />
+      <h3>草稿批次</h3>
+      <BatchTable batches={drafts} videoMode={videoMode} onPublish={onPublish} onClose={onClose} onDeleteDraft={onDeleteDraft} />
+      <h3>历史批次</h3>
+      <BatchTable batches={batches.filter((batch) => batch.status !== "draft" && batch.status !== "published")} videoMode={videoMode} onPublish={onPublish} onClose={onClose} onDeleteDraft={onDeleteDraft} />
     </section>
   );
 }
 
-function ClaimPanel({ batches }: { batches: ExportBatch[] }) {
+function ClaimPanel({
+  batches,
+  videoMode,
+  onPublish,
+  onClose,
+  onDeleteDraft
+}: {
+  batches: ExportBatch[];
+  videoMode: boolean;
+  onPublish: (batch: ExportBatch) => void;
+  onClose: (batch: ExportBatch) => void;
+  onDeleteDraft: (batch: ExportBatch) => void;
+}) {
   return (
     <section className="panel">
       <div className="panel-title">
         <div>
           <h2>领取页管理</h2>
-          <p className="muted compact">点击领取页可以直接打开公开页面。外部用户输入正确口令后才能下载加密 zip 节点包。</p>
+          <p className="muted compact">公开领取页只显示口令输入和领取按钮，不展示后台包列表。只有已发布批次可以领取。</p>
         </div>
       </div>
-      <BatchTable batches={batches} claimOnly />
+      <BatchTable batches={batches} claimOnly videoMode={videoMode} onPublish={onPublish} onClose={onClose} onDeleteDraft={onDeleteDraft} />
     </section>
   );
 }
 
-function StatsPanel({ stats }: { stats: BatchStat[] }) {
+function StatsPanel({ stats, channelStats }: { stats: BatchStat[]; channelStats: ChannelStat[] }) {
+  return (
+    <>
+      <section className="panel">
+        <div className="panel-title"><h2>领取统计</h2><BarChart3 size={18} /></div>
+        <div className="table">
+          <div className="table-head stats-grid"><span>批次</span><span>访问</span><span>口令输入</span><span>正确</span><span>错误</span><span>下载</span><span>反馈</span></div>
+          {stats.map((item) => (
+            <div className="table-row stats-grid" key={item.id}>
+              <span>{item.batch_code}</span>
+              <span>{item.view_count ?? 0}</span>
+              <span>{item.passphrase_attempt_count ?? 0}</span>
+              <span>{item.passphrase_correct_count ?? 0}</span>
+              <span>{item.passphrase_wrong_count ?? 0}</span>
+              <span>{item.download_count ?? 0}</span>
+              <span>{item.feedback_count ?? 0}</span>
+            </div>
+          ))}
+          {!stats.length && <p className="muted">暂无统计数据。</p>}
+        </div>
+      </section>
+      <section className="panel">
+        <div className="panel-title"><h2>渠道来源统计</h2><BarChart3 size={18} /></div>
+        <div className="table">
+          <div className="table-head stats-grid"><span>渠道</span><span>访问</span><span>口令输入</span><span>下载</span><span>反馈</span><span>问题率</span><span>转化率</span></div>
+          {channelStats.map((item) => {
+            const views = item.view_count ?? 0;
+            const downloads = item.download_count ?? 0;
+            const feedbacks = item.feedback_count ?? 0;
+            const unusable = item.unusable_feedback_count ?? 0;
+            return (
+              <div className="table-row stats-grid" key={item.source_platform}>
+                <span>{channelName(item.source_platform)}</span>
+                <span>{views}</span>
+                <span>{item.passphrase_attempt_count ?? 0}</span>
+                <span>{downloads}</span>
+                <span>{feedbacks}</span>
+                <span>{feedbacks ? `${Math.round((unusable / feedbacks) * 100)}%` : "-"}</span>
+                <span>{views ? `${Math.round((downloads / views) * 100)}%` : "-"}</span>
+              </div>
+            );
+          })}
+          {!channelStats.length && <p className="muted">暂无渠道统计。</p>}
+        </div>
+      </section>
+    </>
+  );
+}
+
+function FeedbackPanel({
+  feedback,
+  onStatusChange
+}: {
+  feedback: FeedbackItem[];
+  onStatusChange: (item: FeedbackItem, processStatus: string) => void;
+}) {
   return (
     <section className="panel">
-      <div className="panel-title"><h2>领取统计</h2><BarChart3 size={18} /></div>
+      <div className="panel-title">
+        <div>
+          <h2>节点使用反馈分析</h2>
+          <p className="muted compact">用于判断哪些渠道、设备、客户端或网络环境更容易出现问题。</p>
+        </div>
+        <MessageSquare size={18} />
+      </div>
       <div className="table">
-        <div className="table-head stats-grid"><span>批次</span><span>访问</span><span>口令输入</span><span>正确</span><span>错误</span><span>下载</span><span>反馈</span></div>
-        {stats.map((item) => (
-          <div className="table-row stats-grid" key={item.id}>
-            <span>{item.batch_code}</span>
-            <span>{item.view_count ?? 0}</span>
-            <span>{item.passphrase_attempt_count ?? 0}</span>
-            <span>{item.passphrase_correct_count ?? 0}</span>
-            <span>{item.passphrase_wrong_count ?? 0}</span>
-            <span>{item.download_count ?? 0}</span>
-            <span>{item.feedback_count ?? 0}</span>
+        <div className="table-head feedback-grid"><span>时间</span><span>渠道</span><span>批次</span><span>设备</span><span>软件</span><span>问题类型</span><span>处理状态</span><span>备注</span><span>操作</span></div>
+        {feedback.map((item) => (
+          <div className="table-row feedback-grid" key={item.id}>
+            <span>{formatDate(item.created_at)}</span>
+            <span>{channelName(item.source_platform)}</span>
+            <span>{item.batch_code ?? "-"}</span>
+            <span>{item.device || "-"}</span>
+            <span>{item.client_app || "-"}</span>
+            <span>{item.is_usable === 1 ? "能用" : item.is_usable === 0 ? zhIssue(item.issue_type) : zhIssue(item.issue_type)}</span>
+            <span>{zhProcess(item.process_status)}</span>
+            <span className="truncate">{item.note || "-"}</span>
+            <span className="row-actions">
+              <button className="link-button" type="button" onClick={() => onStatusChange(item, "viewed")}>已查看</button>
+              <button className="link-button" type="button" onClick={() => onStatusChange(item, "resolved")}>已解决</button>
+              <button className="link-button" type="button" onClick={() => onStatusChange(item, "regenerate")}>需重做包</button>
+            </span>
           </div>
         ))}
-        {!stats.length && <p className="muted">暂无统计数据。</p>}
+        {!feedback.length && <p className="muted">暂无反馈。粉丝在公开领取页下载后提交“能用 / 不能用”反馈，这里会显示分析记录。</p>}
       </div>
     </section>
   );
 }
 
-function FeedbackPanel({ feedback }: { feedback: FeedbackItem[] }) {
+function AutomationPanel({ batches, videoMode }: { batches: ExportBatch[]; videoMode: boolean }) {
+  const allowed = batches.filter((batch) => batch.status === "published" && batch.allow_automation);
   return (
     <section className="panel">
-      <div className="panel-title"><h2>反馈数据</h2><MessageSquare size={18} /></div>
-      <div className="table">
-        <div className="table-head feedback-grid"><span>批次</span><span>地区</span><span>运营商</span><span>设备</span><span>软件</span><span>可用</span><span>备注</span></div>
-        {feedback.map((item) => (
-          <div className="table-row feedback-grid" key={item.id}>
-            <span>{item.batch_code ?? "-"}</span>
-            <span>{item.region || "-"}</span>
-            <span>{item.carrier || "-"}</span>
-            <span>{item.device || "-"}</span>
-            <span>{item.client_app || "-"}</span>
-            <span>{item.is_usable === null || item.is_usable === undefined ? "-" : item.is_usable ? "是" : "否"}</span>
-            <span className="truncate">{item.note || "-"}</span>
+      <div className="panel-title">
+        <div>
+          <h2>自动化接口</h2>
+          <p className="muted compact">给 Hermes / OpenClaw / 定时任务读取，只读，不负责自动发布平台内容。</p>
+        </div>
+        <Link2 size={18} />
+      </div>
+      {videoMode && <div className="notice">当前已开启录屏模式，API Token、完整接口地址、完整 slug 和服务器地址已隐藏。</div>}
+      <div className="settings-list">
+        <div className="setting-card">
+          <strong>只读接口</strong>
+          <p className="muted compact">/api/automation/packages、/current-package、/channel-links、/daily-summary、/stats-summary</p>
+        </div>
+        <div className="setting-card">
+          <strong>Token 状态</strong>
+          <p className="muted compact">{videoMode ? "已隐藏" : "通过 AUTOMATION_API_TOKEN 环境变量启用"}</p>
+        </div>
+        <div className="setting-card">
+          <strong>高质量包保护</strong>
+          <p className="muted compact">0-100ms 高质量包默认不允许自动化读取，除非手动开启自动化和 Hermes 权限。</p>
+        </div>
+        <div className="setting-card">
+          <strong>daily-summary</strong>
+          <p className="muted compact">返回固定模板摘要，不调用 AI，不消耗大模型 Token。</p>
+        </div>
+      </div>
+      <h3>允许自动化读取的节点包</h3>
+      <div className="table spaced">
+        <div className="table-head batch-grid"><span>批次</span><span>名称</span><span>状态</span><span>档位</span><span>数量</span><span>权限</span><span>接口</span></div>
+        {allowed.map((batch) => (
+          <div className="table-row batch-grid" key={batch.id}>
+            <span>{formatDate(batch.created_at)}</span>
+            <span className="truncate">{batch.name}</span>
+            <span>{zhStatus(batch.status)}</span>
+            <span>{zhQuality(batch.quality_tier)}</span>
+            <span>{batch.node_count}</span>
+            <span>{batch.allow_hermes_file ? "文件+链接" : batch.allow_hermes_link ? "仅链接" : "仅摘要"}</span>
+            <span className="truncate">{videoMode ? "/api/automation/****" : `/api/automation/packages/${batch.id}`}</span>
           </div>
         ))}
-        {!feedback.length && <p className="muted">暂无反馈。</p>}
+        {!allowed.length && <p className="muted">暂无允许自动化读取的已发布节点包。草稿、关闭、过期、已替换或未授权自动化的包不会出现在这里。</p>}
       </div>
     </section>
   );
 }
 
 function SettingsPanel({ videoMode, onToggleVideoMode, summary }: { videoMode: boolean; onToggleVideoMode: () => void; summary: Summary | null }) {
+  const settingGroups = [
+    ["基础设置", "后台访问地址、公开领取基础地址、系统名称、系统版本、运行状态。"],
+    ["管理员设置", "管理员账号、修改密码入口、退出登录、登录会话有效期。"],
+    ["安全设置", "登录失败限制、Session 过期、公开领取限速、口令错误限制、单 IP 下载限制、录屏模式。"],
+    ["采集设置", "默认采集来源、采集超时时间、采集并发、自动去重。"],
+    ["测试设置", "基础测试开关、Xray-core 真实检测开关、内核路径、低并发、单节点超时、本地端口范围、异常进程清理。"],
+    ["节点包档位", "高质量包 0-100ms、普通优质包 100-200ms、社群福利包 200-300ms、备用包 300ms 以上，阈值后续可配置。"],
+    ["节点包设置", "默认导出数量、默认最大延迟、是否需要口令、公开领取、自动化读取、下载次数限制。"],
+    ["自动化接口", "API Token 管理、只读接口、daily-summary 固定模板、Hermes 读取边界和调用日志。"],
+    ["领取页设置", "公开领取域名、默认说明文案、反馈入口、noindex、渠道统计。"],
+    ["备份与恢复", "数据目录、节点包目录、备份目录、一键备份和恢复规划。"]
+  ];
   return (
     <section className="panel">
       <div className="panel-title"><h2>系统设置</h2><Settings size={18} /></div>
+      {videoMode && <div className="notice">当前已开启录屏模式，敏感信息已隐藏。</div>}
       <div className="settings-grid">
         <div>
           <strong>公开视频模式</strong>
@@ -757,8 +1232,16 @@ function SettingsPanel({ videoMode, onToggleVideoMode, summary }: { videoMode: b
         </button>
         <div>
           <strong>系统状态</strong>
-          <p className="muted compact">{summary?.systemStatus ?? "running"} / v{summary?.version ?? "1.0.0"}</p>
+          <p className="muted compact">{zhStatus(summary?.systemStatus ?? "running")} / v{summary?.version ?? "1.0.0"}</p>
         </div>
+      </div>
+      <div className="settings-list">
+        {settingGroups.map(([title, text]) => (
+          <div className="setting-card" key={title}>
+            <strong>{title}</strong>
+            <p className="muted compact">{text}</p>
+          </div>
+        ))}
       </div>
     </section>
   );
@@ -769,15 +1252,15 @@ function LogsPanel({ logs }: { logs: LogItem[] }) {
     <section className="panel">
       <div className="panel-title"><h2>运行日志</h2><ScrollText size={18} /></div>
       <div className="table">
-        <div className="table-head log-grid"><span>时间</span><span>级别</span><span>内容</span></div>
+        <div className="table-head log-grid"><span>时间</span><span>级别</span><span>摘要</span></div>
         {logs.map((log, index) => (
           <div className="table-row log-grid" key={`${log.created_at}-${index}`}>
             <span>{formatDate(log.created_at)}</span>
-            <span>{log.level}</span>
+            <span>{logLevelName(log.level)}</span>
             <span className="truncate">{log.message}</span>
           </div>
         ))}
-        {!logs.length && <p className="muted">暂无运行日志。</p>}
+        {!logs.length && <p className="muted">暂无运行日志。系统产生采集、测试、导出、领取、反馈或错误事件后，会在这里显示记录。</p>}
       </div>
     </section>
   );
@@ -790,16 +1273,19 @@ function PublicClaimPage({ slug }: { slug: string }) {
   const [passphrase, setPassphrase] = React.useState("");
   const [message, setMessage] = React.useState("");
   const [feedback, setFeedback] = React.useState({
-    region: "",
-    carrier: "",
     device: "",
     clientApp: "",
+    issueType: "other",
     isUsable: true,
     note: ""
   });
 
   React.useEffect(() => {
-    apiFetch(`/api/public/batches/${slug}${window.location.search}`)
+    const meta = document.createElement("meta");
+    meta.name = "robots";
+    meta.content = "noindex,nofollow";
+    document.head.appendChild(meta);
+    apiFetch(`/api/public/claim/${slug}${window.location.search}`)
       .then((res) => res.json())
       .then((data) => {
         setFound(data.found);
@@ -807,12 +1293,15 @@ function PublicClaimPage({ slug }: { slug: string }) {
         setUnlocked(Boolean(data.unlocked));
       })
       .catch(() => setFound(false));
+    return () => {
+      document.head.removeChild(meta);
+    };
   }, [slug]);
 
   async function verify(event: React.FormEvent) {
     event.preventDefault();
     setMessage("");
-    const res = await apiFetch(`/api/public/batches/${slug}/verify${window.location.search}`, {
+    const res = await apiFetch(`/api/public/claim/${slug}/verify${window.location.search}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ passphrase })
@@ -828,7 +1317,7 @@ function PublicClaimPage({ slug }: { slug: string }) {
 
   async function submitFeedback(event: React.FormEvent) {
     event.preventDefault();
-    const res = await apiFetch(`/api/public/batches/${slug}/feedback${window.location.search}`, {
+    const res = await apiFetch(`/api/public/claim/${slug}/feedback${window.location.search}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(feedback)
@@ -843,7 +1332,7 @@ function PublicClaimPage({ slug }: { slug: string }) {
   return (
     <main className="public-shell">
       <section className="public-panel">
-        <h1>{batch?.name ?? "节点包领取"}</h1>
+        <h1>{batch?.title ?? "节点包领取"}</h1>
         <p>{batch?.description || "输入正确口令后即可下载加密节点包。领取页不会直接展示完整节点。"}</p>
         <div className="public-meta">
           <span>有效期：{batch?.expiresAt ? new Date(batch.expiresAt).toLocaleString() : "未设置"}</span>
@@ -858,25 +1347,46 @@ function PublicClaimPage({ slug }: { slug: string }) {
         </form>
 
         {unlocked && (
-          <a className="download-button" href={`/api/public/batches/${slug}/download${window.location.search}`}>
-            <Download size={18} />
-            下载加密节点包
-          </a>
+          <>
+            <a className="download-button" href={`/api/public/claim/${slug}/download${window.location.search}`}>
+              <Download size={18} />
+              下载加密节点包
+            </a>
+            <div className="feedback-card">
+              <h2>节点包能正常使用吗？</h2>
+              <div className="choice-row">
+                <button type="button" className={feedback.isUsable ? "primary small" : "icon"} onClick={() => setFeedback((value) => ({ ...value, isUsable: true }))}>能用</button>
+                <button type="button" className={!feedback.isUsable ? "primary small" : "icon"} onClick={() => setFeedback((value) => ({ ...value, isUsable: false }))}>不能用</button>
+                <button type="button" className={feedback.issueType === "partial_available" ? "primary small" : "icon"} onClick={() => setFeedback((value) => ({ ...value, isUsable: false, issueType: "partial_available" }))}>部分可用</button>
+              </div>
+            </div>
+          </>
         )}
 
         {message && <div className="notice">{message}</div>}
 
         <form className="feedback-form" onSubmit={submitFeedback}>
-          <h2>简单反馈</h2>
-          <input placeholder="地区" value={feedback.region} onChange={(event) => setFeedback((value) => ({ ...value, region: event.target.value }))} />
-          <input placeholder="运营商" value={feedback.carrier} onChange={(event) => setFeedback((value) => ({ ...value, carrier: event.target.value }))} />
-          <input placeholder="设备" value={feedback.device} onChange={(event) => setFeedback((value) => ({ ...value, device: event.target.value }))} />
-          <input placeholder="使用软件" value={feedback.clientApp} onChange={(event) => setFeedback((value) => ({ ...value, clientApp: event.target.value }))} />
-          <label className="check-row">
-            <input type="checkbox" checked={feedback.isUsable} onChange={(event) => setFeedback((value) => ({ ...value, isUsable: event.target.checked }))} />
-            本批次可用
-          </label>
-          <textarea placeholder="备注" value={feedback.note} onChange={(event) => setFeedback((value) => ({ ...value, note: event.target.value }))} />
+          <h2>遇到问题？点这里反馈</h2>
+          <select value={feedback.device} onChange={(event) => setFeedback((value) => ({ ...value, device: event.target.value }))}>
+            <option value="">选择设备系统</option>
+            <option value="Windows">Windows</option>
+            <option value="iPhone">iPhone</option>
+            <option value="Android">Android</option>
+            <option value="Mac">Mac</option>
+            <option value="其他">其他</option>
+          </select>
+          <select value={feedback.clientApp} onChange={(event) => setFeedback((value) => ({ ...value, clientApp: event.target.value }))}>
+            <option value="">选择客户端软件</option>
+            <option value="v2rayN">v2rayN</option>
+            <option value="Clash Verge">Clash Verge</option>
+            <option value="Shadowrocket">Shadowrocket</option>
+            <option value="sing-box">sing-box</option>
+            <option value="其他">其他</option>
+          </select>
+          <select value={feedback.issueType} onChange={(event) => setFeedback((value) => ({ ...value, issueType: event.target.value }))}>
+            {Object.entries(issueText).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+          </select>
+          <textarea maxLength={200} placeholder="备注，可选，最多 200 字" value={feedback.note} onChange={(event) => setFeedback((value) => ({ ...value, note: event.target.value }))} />
           <button className="primary small">提交反馈</button>
         </form>
       </section>
@@ -890,7 +1400,7 @@ function RunTable({ runs }: { runs: CollectionRun[] }) {
       <div className="table-head run-grid"><span>任务</span><span>状态</span><span>来源</span><span>原始</span><span>新增</span><span>错误</span></div>
       {runs.slice(0, 12).map((run) => (
         <div className="table-row run-grid" key={run.id}>
-          <span>#{run.id}</span><span>{run.status}</span><span>{run.fetched_sources}/{run.discovered_sources}</span><span>{run.raw_nodes}</span><span>{run.inserted_nodes}</span><span>{run.error_count}</span>
+          <span>第 {run.id} 批</span><span>{zhStatus(run.status)}</span><span>{run.fetched_sources}/{run.discovered_sources}</span><span>{run.raw_nodes}</span><span>{run.inserted_nodes}</span><span>{run.error_count}</span>
         </div>
       ))}
       {!runs.length && <p className="muted">暂无采集任务记录。</p>}
@@ -904,7 +1414,7 @@ function TestRunTable({ runs }: { runs: TestRun[] }) {
       <div className="table-head run-grid"><span>任务</span><span>状态</span><span>测试</span><span>通过</span><span>失败</span><span>均值</span></div>
       {runs.slice(0, 12).map((run) => (
         <div className="table-row run-grid" key={run.id}>
-          <span>#{run.id}</span><span>{run.status}</span><span>{run.tested_nodes}</span><span>{run.passed_nodes}</span><span>{run.failed_nodes}</span><span>{run.avg_latency_ms ? `${run.avg_latency_ms}ms` : "-"}</span>
+          <span>第 {run.id} 批</span><span>{zhStatus(run.status)}</span><span>{run.tested_nodes}</span><span>{run.passed_nodes}</span><span>{run.failed_nodes}</span><span>{run.avg_latency_ms ? `${run.avg_latency_ms}ms` : "-"}</span>
         </div>
       ))}
       {!runs.length && <p className="muted">暂无测试任务记录。</p>}
@@ -912,23 +1422,51 @@ function TestRunTable({ runs }: { runs: TestRun[] }) {
   );
 }
 
-function BatchTable({ batches, compact = false, claimOnly = false }: { batches: ExportBatch[]; compact?: boolean; claimOnly?: boolean }) {
+function BatchTable({
+  batches,
+  compact = false,
+  claimOnly = false,
+  videoMode,
+  onPublish,
+  onClose,
+  onDeleteDraft
+}: {
+  batches: ExportBatch[];
+  compact?: boolean;
+  claimOnly?: boolean;
+  videoMode: boolean;
+  onPublish: (batch: ExportBatch) => void;
+  onClose: (batch: ExportBatch) => void;
+  onDeleteDraft: (batch: ExportBatch) => void;
+}) {
   return (
     <div className="table spaced">
-      <div className="table-head batch-grid"><span>批次</span><span>名称</span><span>状态</span><span>数量</span><span>领取页</span></div>
+      <div className="table-head batch-grid"><span>批次</span><span>名称</span><span>状态</span><span>档位</span><span>数量</span><span>权限</span><span>领取页 / 操作</span></div>
       {batches.slice(0, compact ? 6 : 50).map((batch) => {
-        const claimUrl = `/p/${batch.public_slug}`;
+        const claimUrl = `/r/${batch.public_slug}`;
+        const displayUrl = videoMode ? `/r/${maskSlug(batch.public_slug)}` : claimUrl;
         return (
           <div className="table-row batch-grid" key={batch.id}>
-            <span>{batch.batch_code}</span>
+            <span>{formatDate(batch.created_at)}</span>
             <span className="truncate">{batch.name}</span>
-            <span>{batch.status}</span>
+            <span>{zhStatus(batch.status)}</span>
+            <span>{zhQuality(batch.quality_tier)}</span>
             <span>{batch.node_count}</span>
+            <span>{batch.allow_automation ? "自动化可读" : "后台手动"}</span>
             <span className="row-actions">
-              {batch.status === "published" || claimOnly ? (
-                <a className="text-link" href={claimUrl} target="_blank" rel="noreferrer">打开领取页</a>
+              {batch.status === "published" ? (
+                <>
+                  <a className="text-link" href={claimUrl} target="_blank" rel="noreferrer">{claimOnly ? "预览" : displayUrl}</a>
+                  <button className="link-button" type="button" onClick={() => navigator.clipboard?.writeText(`${window.location.origin}${claimUrl}`)}>复制链接</button>
+                  <button className="link-button danger-text" type="button" onClick={() => onClose(batch)}>关闭</button>
+                </>
+              ) : batch.status === "draft" ? (
+                <>
+                  <button className="link-button" type="button" onClick={() => onPublish(batch)}>发布此批次</button>
+                  <button className="link-button danger-text" type="button" onClick={() => onDeleteDraft(batch)}><Trash2 size={14} /> 删除草稿</button>
+                </>
               ) : (
-                <span className="muted">未发布</span>
+                <span className="muted">{zhStatus(batch.status)}</span>
               )}
             </span>
           </div>
@@ -951,15 +1489,17 @@ function NodePreview({ title, nodes }: { title: string; nodes: NodeItem[] }) {
 function NodeTable({ nodes }: { nodes: NodeItem[] }) {
   return (
     <div className="table">
-      <div className="table-head node-grid"><span>协议</span><span>状态</span><span>后台初筛延迟</span><span>来源</span><span>最近测试</span><span>失败原因</span></div>
+      <div className="table-head node-grid"><span>协议</span><span>状态</span><span>基础延迟</span><span>真实延迟</span><span>档位</span><span>测试方式</span><span>最近测试</span><span>失败原因</span></div>
       {nodes.map((node) => (
         <div className="table-row node-grid" key={node.id}>
           <span>{node.protocol}</span>
-          <span>{node.status}</span>
+          <span>{zhStatus(node.status)}</span>
           <span>{node.latency_ms ? `${node.latency_ms}ms` : "-"}</span>
-          <span>{node.source_type ?? "-"}</span>
-          <span>{formatDate(node.last_tested_at)}</span>
-          <span className="truncate">{node.failure_reason ?? "-"}</span>
+          <span>{node.real_latency_ms ? `${node.real_latency_ms}ms` : "-"}</span>
+          <span>{zhQuality(node.quality_tier)}</span>
+          <span>{node.test_method === "xray-core" ? "Xray-core 真实检测" : "TCP 基础测试"}</span>
+          <span>{formatDate(node.real_tested_at ?? node.last_tested_at)}</span>
+          <span className="truncate">{zhFailure(node.failure_reason)}</span>
         </div>
       ))}
       {!nodes.length && <p className="muted">暂无节点记录。</p>}
@@ -975,7 +1515,7 @@ function SourceCache({ sources, videoMode }: { sources: SourceItem[]; videoMode:
         <div className="table-head source-grid"><span>类型</span><span>状态</span><span>成功</span><span>失败</span><span>来源 URL</span></div>
         {sources.slice(0, 20).map((source) => (
           <div className="table-row source-grid" key={source.id}>
-            <span>{source.source_type}</span><span>{source.status}</span><span>{source.success_count}</span><span>{source.failure_count}</span><span className="truncate">{videoMode ? maskUrl(source.url) : source.url}</span>
+            <span>{source.source_type}</span><span>{zhStatus(source.status)}</span><span>{source.success_count}</span><span>{source.failure_count}</span><span className="truncate">{videoMode ? maskUrl(source.url) : source.url}</span>
           </div>
         ))}
         {!sources.length && <p className="muted">暂无来源缓存。</p>}
@@ -1017,6 +1557,39 @@ function maskUrl(url: string) {
   } catch {
     return "已隐藏";
   }
+}
+
+function maskSlug(slug: string) {
+  if (slug.length <= 6) return "***";
+  return `${slug.slice(0, 3)}***${slug.slice(-3)}`;
+}
+
+function channelName(value?: string | null) {
+  const key = (value || "direct").toLowerCase();
+  const names: Record<string, string> = {
+    youtube: "YouTube",
+    youtube_desc: "YouTube 简介",
+    youtube_pin: "YouTube 置顶评论",
+    telegram: "Telegram",
+    facebook: "Facebook",
+    x: "X / Twitter",
+    twitter: "X / Twitter",
+    tiktok: "TikTok",
+    direct: "直接访问"
+  };
+  return names[key] ?? "其他";
+}
+
+function logLevelName(value?: string | null) {
+  const names: Record<string, string> = {
+    info: "信息",
+    warning: "警告",
+    warn: "警告",
+    error: "错误",
+    success: "成功",
+    debug: "调试"
+  };
+  return value ? names[value] ?? value : "-";
 }
 
 function formatDate(value?: string | null) {

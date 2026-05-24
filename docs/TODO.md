@@ -2,11 +2,20 @@
 
 ## 当前高优先级补充
 
+- 在 VPS 上执行 Docker 构建，验证新增质量档位、自动化接口和 Xray 检测入口是否正常。
+- 完成 Xray-core 真实检测协议转换：VLESS、VMess、Trojan、Shadowsocks、Reality、TLS、WS、gRPC。
+- Xray-core 检测必须实现临时配置、127.0.0.1 随机端口、代理访问测试、超时关闭和异常进程清理。
+- 将 `clash.yaml`、`sing-box.json` 从安全模板升级为真实可导入配置。
+- 将质量档位阈值从当前默认规则升级为系统设置可配置项。
+- 增加自动化接口 Token 生成/重置/禁用的后台操作，目前先通过环境变量 `AUTOMATION_API_TOKEN` 启用。
 - 在 VPS 上验证最新前端：登录、开始采集、采集记录刷新、节点池显示、开始测试、测试记录刷新、节点包生成、领取页下载。
+- 在 VPS 上验证发布机制：生成节点包默认草稿、手动发布、替换旧批次、关闭批次、删除草稿、`/r/:slug` 领取、过期和下载限制。
+- 在 VPS 上验证反馈闭环：公开领取页提交反馈、后台反馈数据出现、渠道统计反馈数量和问题率更新、反馈处理状态可更新。
 - 在 VPS 上执行 Docker 构建和健康检查：`docker compose up -d --build`、`curl -I http://127.0.0.1:3000`、`docker logs --tail=120 public-node-admin`。
 - 继续完善录屏模式：节点内容、来源 URL、日志、路径、Token、Cookie、Session、用户反馈敏感字段全部脱敏。
 - 设计 Xray-core 二级真实代理检测：临时配置、127.0.0.1 本地监听、超时清理、日志脱敏、并发限制。
 - 后续补充 sing-box 检测到低优先级，优先保证当前 TCP 初筛和后台操作稳定。
+- 后续部署规划：使用 Cloudflare Tunnel / Caddy / Nginx 将后台域名与公开领取域名分离，不在当前版本修改 80/443 或影响 X-UI。
 
 ## 高优先级
 
