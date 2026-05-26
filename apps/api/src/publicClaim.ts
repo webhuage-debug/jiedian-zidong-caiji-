@@ -1,11 +1,20 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
-import path from "node:path";
 import bcrypt from "bcryptjs";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { config } from "./config.js";
 import { db } from "./db.js";
+import {
+  getPublicSubscriptionBySlug,
+  getPublicSubscriptionByToken,
+  getSubscriptionPublicInfo,
+  hashSubscriptionIp,
+  incrementSubscriptionStat,
+  readSubscriptionCache,
+  recordSubscriptionEvent,
+  verifySubscriptionPassphrase
+} from "./subscription/subscriptionService.js";
 
 const unlockCookiePrefix = "pna_claim_";
 const downloadBuckets = new Map<string, { count: number; resetAt: number }>();
@@ -33,12 +42,26 @@ export function registerPublicClaimRoutes(app: FastifyInstance) {
   app.get("/api/public/claim/:slug", async (request, reply) => {
     reply.header("X-Robots-Tag", "noindex, nofollow");
     const { slug } = request.params as { slug: string };
+    const subscription = getPublicSubscriptionBySlug(slug);
+    if (subscription) {
+      const unlocked = isUnlocked(request, slug);
+      incrementSubscriptionStat(subscription.id, "view_count");
+      recordSubscriptionEvent(subscription.id, "view", getSourcePlatform(request), hashSubscriptionIp(request.ip), getUserAgent(request));
+      return {
+        found: true,
+        mode: "subscription",
+        batch: getSubscriptionPublicInfo(subscription, unlocked),
+        unlocked
+      };
+    }
+
     const batch = getPublicBatch(slug);
     if (!batch) return { found: false };
     recordPublicEvent(batch.id, "view", request);
     incrementStat(batch.id, "view_count");
     return {
       found: true,
+      mode: "zip",
       batch: publicBatchInfo(batch),
       unlocked: !batch.requires_passphrase || isUnlocked(request, slug)
     };
@@ -48,12 +71,33 @@ export function registerPublicClaimRoutes(app: FastifyInstance) {
     reply.header("X-Robots-Tag", "noindex, nofollow");
     const { slug } = request.params as { slug: string };
     const body = z.object({ passphrase: z.string().max(128).default("") }).parse(request.body);
+    const subscription = getPublicSubscriptionBySlug(slug);
+    if (subscription) {
+      incrementSubscriptionStat(subscription.id, "passphrase_attempt_count");
+      recordSubscriptionEvent(subscription.id, "passphrase_attempt", getSourcePlatform(request), hashSubscriptionIp(request.ip), getUserAgent(request));
+      if (!verifySubscriptionPassphrase(subscription, body.passphrase)) {
+        incrementSubscriptionStat(subscription.id, "passphrase_wrong_count");
+        recordSubscriptionEvent(subscription.id, "passphrase_wrong", getSourcePlatform(request), hashSubscriptionIp(request.ip), getUserAgent(request));
+        return reply.code(401).send({ ok: false, message: "口令错误" });
+      }
+      incrementSubscriptionStat(subscription.id, "passphrase_correct_count");
+      incrementSubscriptionStat(subscription.id, "unlock_count");
+      recordSubscriptionEvent(subscription.id, "passphrase_correct", getSourcePlatform(request), hashSubscriptionIp(request.ip), getUserAgent(request));
+      setUnlockCookie(reply, slug);
+      return {
+        ok: true,
+        mode: "subscription",
+        rawUrl: `${config.PUBLIC_BASE_URL}/sub/${subscription.subscription_token}/raw`,
+        base64Url: `${config.PUBLIC_BASE_URL}/sub/${subscription.subscription_token}/base64`
+      };
+    }
+
     const batch = getPublicBatch(slug);
     if (!batch) return reply.code(404).send({ ok: false, message: "领取已关闭" });
     if (!batch.requires_passphrase) {
       incrementStat(batch.id, "unlock_count");
       setUnlockCookie(reply, slug);
-      return { ok: true, downloadUrl: `/api/public/claim/${slug}/download` };
+      return { ok: true, mode: "zip", downloadUrl: `/api/public/claim/${slug}/download` };
     }
     if (!allowVerify(request, slug, batch)) return reply.code(429).send({ ok: false, message: "请求过于频繁，请稍后再试" });
 
@@ -72,7 +116,7 @@ export function registerPublicClaimRoutes(app: FastifyInstance) {
     incrementStat(batch.id, "unlock_count");
     recordPublicEvent(batch.id, "passphrase_correct", request);
     setUnlockCookie(reply, slug);
-    return { ok: true, downloadUrl: `/api/public/claim/${slug}/download` };
+    return { ok: true, mode: "zip", downloadUrl: `/api/public/claim/${slug}/download` };
   });
 
   app.get("/api/public/claim/:slug/download", async (request, reply) => {
@@ -89,17 +133,41 @@ export function registerPublicClaimRoutes(app: FastifyInstance) {
 
     incrementStat(batch.id, "download_count");
     recordPublicEvent(batch.id, "download", request);
-    const fileName = `${batch.batch_code}.zip`;
     reply.header("Content-Type", "application/zip");
-    reply.header("Content-Disposition", `attachment; filename="${encodeURIComponent(fileName)}"`);
+    reply.header("Content-Disposition", `attachment; filename="${encodeURIComponent(`${batch.batch_code}.zip`)}"`);
     return reply.send(fs.createReadStream(batch.package_path));
+  });
+
+  app.get("/sub/:token/raw", async (request, reply) => {
+    reply.header("X-Robots-Tag", "noindex, nofollow");
+    reply.header("Cache-Control", `public, max-age=${config.SUBSCRIPTION_CACHE_MAX_AGE_SECONDS}`);
+    reply.header("Content-Type", "text/plain; charset=utf-8");
+    const { token } = request.params as { token: string };
+    const activity = getPublicSubscriptionByToken(token);
+    if (!activity) return "本期订阅已过期，请查看华哥最新 YouTube 视频获取新一期订阅。\n";
+    incrementSubscriptionStat(activity.id, "raw_access_count");
+    recordSubscriptionEvent(activity.id, "sub_raw", getSourcePlatform(request), hashSubscriptionIp(request.ip), getUserAgent(request));
+    return readSubscriptionCache(activity, "raw");
+  });
+
+  app.get("/sub/:token/base64", async (request, reply) => {
+    reply.header("X-Robots-Tag", "noindex, nofollow");
+    reply.header("Cache-Control", `public, max-age=${config.SUBSCRIPTION_CACHE_MAX_AGE_SECONDS}`);
+    reply.header("Content-Type", "text/plain; charset=utf-8");
+    const { token } = request.params as { token: string };
+    const activity = getPublicSubscriptionByToken(token);
+    if (!activity) return Buffer.from("本期订阅已过期，请查看华哥最新 YouTube 视频获取新一期订阅。\n", "utf8").toString("base64");
+    incrementSubscriptionStat(activity.id, "base64_access_count");
+    recordSubscriptionEvent(activity.id, "sub_base64", getSourcePlatform(request), hashSubscriptionIp(request.ip), getUserAgent(request));
+    return readSubscriptionCache(activity, "base64");
   });
 
   app.post("/api/public/claim/:slug/feedback", async (request, reply) => {
     reply.header("X-Robots-Tag", "noindex, nofollow");
     const { slug } = request.params as { slug: string };
     const batch = getPublicBatch(slug);
-    if (!batch) return reply.code(404).send({ ok: false, message: "领取已关闭" });
+    const subscription = getPublicSubscriptionBySlug(slug);
+    if (!batch && !subscription) return reply.code(404).send({ ok: false, message: "领取已关闭" });
 
     const body = z
       .object({
@@ -116,27 +184,37 @@ export function registerPublicClaimRoutes(app: FastifyInstance) {
       })
       .parse(request.body);
 
-    const sourcePlatform = typeof request.query === "object" && request.query ? (request.query as { from?: string }).from : undefined;
+    const sourcePlatform = getSourcePlatform(request);
     db.prepare(
-      `INSERT INTO feedback (batch_id, region, carrier, device, client_app, is_usable, issue_type, source_platform, note, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO feedback (
+        batch_id, subscription_activity_id, subscription_token,
+        region, carrier, device, client_app, is_usable, issue_type, source_platform, note, created_at
+      )
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
-      batch.id,
+      batch?.id ?? null,
+      subscription?.id ?? null,
+      subscription?.subscription_token ?? null,
       body.region,
       body.carrier,
       body.device,
       body.clientApp,
       body.isUsable === undefined ? null : body.isUsable ? 1 : 0,
       body.issueType,
-      sourcePlatform ?? null,
+      sourcePlatform,
       body.note,
       new Date().toISOString()
     );
-    incrementStat(batch.id, "feedback_count");
-    recordPublicEvent(batch.id, "feedback", request);
+    if (batch) {
+      incrementStat(batch.id, "feedback_count");
+      recordPublicEvent(batch.id, "feedback", request);
+    }
+    if (subscription) {
+      incrementSubscriptionStat(subscription.id, "feedback_count");
+      recordSubscriptionEvent(subscription.id, "feedback", sourcePlatform, hashSubscriptionIp(request.ip), getUserAgent(request));
+    }
     return { ok: true };
   });
-
 }
 
 function getPublicBatch(slug: string) {
@@ -162,7 +240,7 @@ function getPublicBatch(slug: string) {
 function publicBatchInfo(batch: BatchRow) {
   return {
     title: batch.name || "节点包领取",
-    description: batch.description || "输入本期口令后即可领取节点包。",
+    description: batch.description || "输入本期口令后即可领取备用节点包。",
     expiresAt: batch.expires_at ?? null
   };
 }
@@ -204,15 +282,22 @@ function incrementStat(batchId: number, field: string) {
 }
 
 function recordPublicEvent(batchId: number, eventType: string, request: FastifyRequest) {
-  const sourcePlatform = typeof request.query === "object" && request.query ? (request.query as { from?: string }).from : undefined;
   db.prepare(
     `INSERT INTO public_events (batch_id, event_type, source_platform, ip_hash, user_agent, created_at)
      VALUES (?, ?, ?, ?, ?, ?)`
-  ).run(batchId, eventType, sourcePlatform ?? null, hashIp(request.ip), request.headers["user-agent"] ?? "", new Date().toISOString());
+  ).run(batchId, eventType, getSourcePlatform(request), hashIp(request.ip), getUserAgent(request), new Date().toISOString());
 }
 
 function hashIp(ip: string) {
   return crypto.createHmac("sha256", config.SESSION_SECRET).update(ip).digest("hex");
+}
+
+function getSourcePlatform(request: FastifyRequest) {
+  return typeof request.query === "object" && request.query ? ((request.query as { from?: string }).from ?? null) : null;
+}
+
+function getUserAgent(request: FastifyRequest) {
+  return String(request.headers["user-agent"] ?? "").slice(0, 300);
 }
 
 function allowVerify(request: FastifyRequest, slug: string, batch: BatchRow) {
@@ -259,13 +344,17 @@ function allowDownload(request: FastifyRequest, batch: BatchRow) {
     downloadBuckets.set(key, { count: 1, resetAt: now + 24 * 60 * 60 * 1000 });
     return true;
   }
-  const limit = Math.min(batch.ip_download_limit ?? 3, config.DOWNLOAD_RATE_LIMIT_PER_MINUTE);
-  if (existing.count >= limit) return false;
+  if (existing.count >= (batch.ip_download_limit ?? 3)) return false;
   existing.count += 1;
   return true;
 }
 
-function isPackagePathAllowed(packagePath: string) {
-  const resolved = path.resolve(packagePath);
-  return resolved.startsWith(config.EXPORT_DIR + path.sep);
+function isPackagePathAllowed(filePath: string) {
+  const resolved = pathResolve(filePath);
+  const exportDir = pathResolve(config.EXPORT_DIR);
+  return resolved.startsWith(exportDir);
+}
+
+function pathResolve(value: string) {
+  return fs.realpathSync.native(fs.existsSync(value) ? value : config.EXPORT_DIR);
 }

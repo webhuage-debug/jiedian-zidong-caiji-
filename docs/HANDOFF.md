@@ -1,5 +1,24 @@
 # Handoff Log
 
+## 2026-05-26 v1.1.0 自动节点订阅池主流程
+
+- 本次开发目标：将系统主流程从“粉丝下载 ZIP 节点包”升级为“视频口令解锁订阅链接”，ZIP 保留为后台备用导出。
+- 已完成：新增订阅活动数据表、订阅输出池表、订阅统计表、订阅访问事件表，并为反馈表增加订阅活动和订阅 token 关联字段。
+- 已完成：新增订阅活动后端服务，支持创建订阅活动、从 Xray 真实可用池生成订阅输出池、生成 raw/base64 缓存、执行健康检查、刷新订阅缓存。
+- 已完成：新增公开订阅接口 `/sub/:token/raw` 与 `/sub/:token/base64`，订阅访问只读取缓存内容，不触发实时采集、实时筛选或 Xray 检测；过期后返回中文提示。
+- 已完成：新增订阅自动维护定时任务，应用启动后按 `SUBSCRIPTION_CACHE_MAX_AGE_SECONDS` 周期扫描已发布未过期活动，默认每 300 秒执行到期健康检查；正常节点保留，失效、超出淘汰延迟或真实检测时间过旧的输出节点会被替换并刷新缓存。
+- 已完成：订阅访问事件会统计 24 小时活跃 IP 哈希数量，超过 5/10/30 个活跃来源时分别标记低/中/高风险，不直接硬封，避免误伤正常用户。
+- 已完成：新增 `GET /api/public/current-claim`，用于 Telegram Bot 第一版读取当前公开领取页链接和截止时间。
+- 已完成：公开领取页主按钮改为验证视频口令后复制 raw/base64 订阅链接；备用 ZIP 下载只作为旧批次兼容能力保留。
+- 已完成：后台新增“订阅管理”页面，支持创建订阅活动、查看领取页和订阅链接、重建输出池、健康检查、刷新缓存；录屏模式下 slug/token 脱敏展示。
+- 已完成：`.env.example` 新增 `SUB_CACHE_DIR`、`SUBSCRIPTION_DEFAULT_DAYS`、`SUBSCRIPTION_DEFAULT_OUTPUT_COUNT`、`SUBSCRIPTION_CACHE_MAX_AGE_SECONDS`。
+- 已完成：版本号更新为 v1.1.0，并更新 README 与 CHANGELOG。
+- 修改文件：`apps/api/src/config.ts`、`apps/api/src/db.ts`、`apps/api/src/schema.ts`、`apps/api/src/publicClaim.ts`、`apps/api/src/routes.ts`、`apps/api/src/subscription/subscriptionService.ts`、`apps/web/src/main.tsx`、`apps/web/src/styles.css`、`.env.example`、`package.json`、`apps/api/package.json`、`apps/web/package.json`、`README.md`、`docs/CHANGELOG.md`、`docs/HANDOFF.md`、`docs/DEVELOPMENT_LOG.md`、`docs/TODO.md`、`docs/SECURITY.md`。
+- 需要验证：在 VPS 上重新构建 Docker 后，创建订阅活动、验证领取页口令、复制 raw/base64 链接、访问 `/sub/:token/raw` 和 `/sub/:token/base64`、等待自动健康检查写入最近检查时间和替换数量、检查订阅缓存文件不进入 Git。
+- 当前问题：本地 Windows 工作区无完整 `node_modules`，不能在本地执行完整 TypeScript build；需要在 Docker/VPS 环境做最终构建验证。
+- 敏感信息检查：不得提交 `.env`、数据库、节点数据、订阅缓存、节点包、运行日志、API Token、Bot Token、后台密码、Xray 临时配置或完整节点链接。
+- Git 状态：本次修改待敏感检查、提交并推送。
+
 ## 2026-05-24 Xray 全量队列检测补丁
 
 - 本次目标：修复 Xray-core 真实检测只跑固定 50 条的问题，改为每批 50 条、低并发、自动持续检测未检测候选节点。

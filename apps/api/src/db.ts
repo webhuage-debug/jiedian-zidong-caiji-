@@ -7,6 +7,7 @@ import { schemaSql } from "./schema.js";
 
 fs.mkdirSync(path.dirname(config.DATABASE_PATH), { recursive: true });
 fs.mkdirSync(config.EXPORT_DIR, { recursive: true });
+fs.mkdirSync(config.SUB_CACHE_DIR, { recursive: true });
 
 export const db = new Database(config.DATABASE_PATH);
 db.pragma("journal_mode = WAL");
@@ -25,6 +26,74 @@ function runLightweightMigrations() {
       node_id INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
       created_at TEXT NOT NULL,
       PRIMARY KEY (batch_id, node_id)
+    )`
+  ).run();
+
+  db.prepare(
+    `CREATE TABLE IF NOT EXISTS subscription_activities (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      video_note TEXT,
+      status TEXT NOT NULL DEFAULT 'draft',
+      claim_slug TEXT NOT NULL UNIQUE,
+      subscription_token TEXT NOT NULL UNIQUE,
+      passphrase_hash TEXT,
+      starts_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      output_count INTEGER NOT NULL DEFAULT 10,
+      target_latency_ms INTEGER NOT NULL DEFAULT 200,
+      warning_latency_ms INTEGER NOT NULL DEFAULT 300,
+      remove_latency_ms INTEGER NOT NULL DEFAULT 500,
+      health_check_interval_minutes INTEGER NOT NULL DEFAULT 5,
+      last_health_check_at TEXT,
+      last_cache_generated_at TEXT,
+      last_replacement_count INTEGER NOT NULL DEFAULT 0,
+      risk_status TEXT NOT NULL DEFAULT 'normal',
+      risk_message TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )`
+  ).run();
+
+  db.prepare(
+    `CREATE TABLE IF NOT EXISTS subscription_activity_nodes (
+      activity_id INTEGER NOT NULL REFERENCES subscription_activities(id) ON DELETE CASCADE,
+      node_id INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+      region_group TEXT,
+      added_at TEXT NOT NULL,
+      last_checked_at TEXT,
+      consecutive_failures INTEGER NOT NULL DEFAULT 0,
+      consecutive_high_latency INTEGER NOT NULL DEFAULT 0,
+      replaced_at TEXT,
+      PRIMARY KEY (activity_id, node_id)
+    )`
+  ).run();
+
+  db.prepare(
+    `CREATE TABLE IF NOT EXISTS subscription_stats (
+      activity_id INTEGER PRIMARY KEY REFERENCES subscription_activities(id) ON DELETE CASCADE,
+      view_count INTEGER NOT NULL DEFAULT 0,
+      passphrase_attempt_count INTEGER NOT NULL DEFAULT 0,
+      passphrase_correct_count INTEGER NOT NULL DEFAULT 0,
+      passphrase_wrong_count INTEGER NOT NULL DEFAULT 0,
+      unlock_count INTEGER NOT NULL DEFAULT 0,
+      raw_access_count INTEGER NOT NULL DEFAULT 0,
+      base64_access_count INTEGER NOT NULL DEFAULT 0,
+      feedback_count INTEGER NOT NULL DEFAULT 0,
+      active_ip_count INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL
+    )`
+  ).run();
+
+  db.prepare(
+    `CREATE TABLE IF NOT EXISTS subscription_access_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      activity_id INTEGER REFERENCES subscription_activities(id) ON DELETE SET NULL,
+      event_type TEXT NOT NULL,
+      source_platform TEXT,
+      ip_hash TEXT,
+      user_agent TEXT,
+      created_at TEXT NOT NULL
     )`
   ).run();
 
@@ -70,6 +139,12 @@ function runLightweightMigrations() {
 
   const feedbackColumns = db.prepare("PRAGMA table_info(feedback)").all() as Array<{ name: string }>;
   if (feedbackColumns.length) {
+    if (!feedbackColumns.some((column) => column.name === "subscription_activity_id")) {
+      db.prepare("ALTER TABLE feedback ADD COLUMN subscription_activity_id INTEGER REFERENCES subscription_activities(id) ON DELETE SET NULL").run();
+    }
+    if (!feedbackColumns.some((column) => column.name === "subscription_token")) {
+      db.prepare("ALTER TABLE feedback ADD COLUMN subscription_token TEXT").run();
+    }
     if (!feedbackColumns.some((column) => column.name === "issue_type")) {
       db.prepare("ALTER TABLE feedback ADD COLUMN issue_type TEXT").run();
     }
@@ -81,6 +156,13 @@ function runLightweightMigrations() {
     }
     if (!feedbackColumns.some((column) => column.name === "process_note")) {
       db.prepare("ALTER TABLE feedback ADD COLUMN process_note TEXT").run();
+    }
+  }
+
+  const subscriptionColumns = db.prepare("PRAGMA table_info(subscription_activities)").all() as Array<{ name: string }>;
+  if (subscriptionColumns.length) {
+    if (!subscriptionColumns.some((column) => column.name === "last_replacement_count")) {
+      db.prepare("ALTER TABLE subscription_activities ADD COLUMN last_replacement_count INTEGER NOT NULL DEFAULT 0").run();
     }
   }
 }

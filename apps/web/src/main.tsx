@@ -200,7 +200,56 @@ type LogItem = {
 type PublicBatch = {
   title: string;
   description: string;
+  mode?: string;
+  startsAt?: string | null;
   expiresAt?: string | null;
+  remainingSeconds?: number;
+  status?: string;
+  riskStatus?: string;
+  riskMessage?: string | null;
+  outputCount?: number;
+  rawUrl?: string | null;
+  base64Url?: string | null;
+};
+
+type SubscriptionActivity = {
+  id: number;
+  name: string;
+  video_note?: string;
+  status: string;
+  claim_slug: string;
+  subscription_token: string;
+  starts_at: string;
+  expires_at: string;
+  output_count: number;
+  target_latency_ms: number;
+  warning_latency_ms: number;
+  remove_latency_ms: number;
+  health_check_interval_minutes: number;
+  last_health_check_at?: string | null;
+  last_cache_generated_at?: string | null;
+  last_replacement_count?: number;
+  risk_status?: string | null;
+  risk_message?: string | null;
+  view_count?: number;
+  raw_access_count?: number;
+  base64_access_count?: number;
+  feedback_count?: number;
+  active_ip_count?: number;
+  created_at?: string;
+};
+
+type SubscriptionFormState = {
+  name: string;
+  videoNote: string;
+  passphrase: string;
+  startsAt: string;
+  expiresAt: string;
+  outputCount: number;
+  targetLatencyMs: number;
+  warningLatencyMs: number;
+  removeLatencyMs: number;
+  healthCheckIntervalMinutes: number;
 };
 
 type ExportFormState = {
@@ -232,6 +281,7 @@ type ViewKey =
   | "tests"
   | "failed"
   | "packages"
+  | "subscriptions"
   | "claim"
   | "stats"
   | "feedback"
@@ -246,6 +296,7 @@ const navItems: Array<{ key: ViewKey; label: string; icon: React.ReactNode }> = 
   { key: "tests", label: "测试记录", icon: <Activity size={17} /> },
   { key: "failed", label: "失效节点记录", icon: <ListFilter size={17} /> },
   { key: "packages", label: "节点包管理", icon: <FileArchive size={17} /> },
+  { key: "subscriptions", label: "订阅管理", icon: <Link2 size={17} /> },
   { key: "claim", label: "领取页管理", icon: <Link2 size={17} /> },
   { key: "stats", label: "统计数据", icon: <BarChart3 size={17} /> },
   { key: "feedback", label: "反馈数据", icon: <MessageSquare size={17} /> },
@@ -369,7 +420,7 @@ function apiFetch(input: RequestInfo | URL, init: RequestInit = {}) {
 
 function App() {
   const publicMatch = window.location.pathname.match(/^\/(?:p|r)\/([^/]+)/);
-  if (publicMatch) return <PublicClaimPage slug={publicMatch[1]} />;
+  if (publicMatch) return <PublicSubscriptionClaimPage slug={publicMatch[1]} />;
   return <AdminApp />;
 }
 
@@ -459,6 +510,7 @@ function Dashboard({ user, onLogout }: { user: { username: string }; onLogout: (
   const [nodes, setNodes] = React.useState<NodeItem[]>([]);
   const [failedNodes, setFailedNodes] = React.useState<NodeItem[]>([]);
   const [batches, setBatches] = React.useState<ExportBatch[]>([]);
+  const [subscriptions, setSubscriptions] = React.useState<SubscriptionActivity[]>([]);
   const [stats, setStats] = React.useState<BatchStat[]>([]);
   const [channelStats, setChannelStats] = React.useState<ChannelStat[]>([]);
   const [feedback, setFeedback] = React.useState<FeedbackItem[]>([]);
@@ -503,6 +555,18 @@ function Dashboard({ user, onLogout }: { user: { username: string }; onLogout: (
     ipDownloadLimit: 3,
     wrongPassphraseLimit: 8
   });
+  const [subscriptionForm, setSubscriptionForm] = React.useState<SubscriptionFormState>({
+    name: "本期 YouTube 免费节点订阅",
+    videoNote: "",
+    passphrase: "",
+    startsAt: "",
+    expiresAt: "",
+    outputCount: 10,
+    targetLatencyMs: 200,
+    warningLatencyMs: 300,
+    removeLatencyMs: 500,
+    healthCheckIntervalMinutes: 5
+  });
 
   const refresh = React.useCallback(async () => {
     const nodeQuery = new URLSearchParams({ limit: "50" });
@@ -519,6 +583,7 @@ function Dashboard({ user, onLogout }: { user: { username: string }; onLogout: (
       nodesRes,
       failedNodesRes,
       batchesRes,
+      subscriptionsRes,
       videoModeRes,
       statsRes,
       channelStatsRes,
@@ -533,6 +598,7 @@ function Dashboard({ user, onLogout }: { user: { username: string }; onLogout: (
       apiFetch(`/api/nodes?${nodeQuery.toString()}`),
       apiFetch("/api/nodes?status=test_failed&limit=50"),
       apiFetch("/api/export-batches"),
+      apiFetch("/api/subscriptions"),
       apiFetch("/api/settings/video-mode"),
       apiFetch("/api/stats/batches"),
       apiFetch("/api/stats/channels"),
@@ -547,6 +613,7 @@ function Dashboard({ user, onLogout }: { user: { username: string }; onLogout: (
     setNodes((await nodesRes.json()).items ?? []);
     setFailedNodes((await failedNodesRes.json()).items ?? []);
     setBatches((await batchesRes.json()).items ?? []);
+    setSubscriptions((await subscriptionsRes.json()).items ?? []);
     setVideoMode(Boolean((await videoModeRes.json()).enabled));
     setStats((await statsRes.json()).items ?? []);
     setChannelStats((await channelStatsRes.json()).items ?? []);
@@ -757,6 +824,76 @@ function Dashboard({ user, onLogout }: { user: { username: string }; onLogout: (
     await refresh();
   }
 
+  async function createSubscription(event: React.FormEvent) {
+    event.preventDefault();
+    if (!subscriptionForm.passphrase.trim()) {
+      setNotice("请先填写本期视频口令，粉丝输入正确口令后才能看到订阅链接。");
+      return;
+    }
+    setNotice("正在创建本期订阅活动，并从 Xray 真实可用池生成订阅缓存...");
+    const res = await apiFetch("/api/subscriptions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: subscriptionForm.name,
+        videoNote: subscriptionForm.videoNote,
+        passphrase: subscriptionForm.passphrase,
+        startsAt: subscriptionForm.startsAt ? new Date(subscriptionForm.startsAt).toISOString() : undefined,
+        expiresAt: subscriptionForm.expiresAt ? new Date(subscriptionForm.expiresAt).toISOString() : undefined,
+        outputCount: Number(subscriptionForm.outputCount),
+        targetLatencyMs: Number(subscriptionForm.targetLatencyMs),
+        warningLatencyMs: Number(subscriptionForm.warningLatencyMs),
+        removeLatencyMs: Number(subscriptionForm.removeLatencyMs),
+        healthCheckIntervalMinutes: Number(subscriptionForm.healthCheckIntervalMinutes)
+      })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setNotice(data.message ?? "订阅活动创建失败");
+      return;
+    }
+    setNotice("订阅活动已创建：粉丝通过领取页输入视频口令后，可以复制 raw / base64 订阅链接。");
+    setSubscriptionForm((value) => ({ ...value, passphrase: "" }));
+    setActiveView("subscriptions");
+    await refresh();
+  }
+
+  async function rebuildSubscription(activity: SubscriptionActivity) {
+    setNotice(`正在重建订阅输出池：${activity.name}`);
+    const res = await apiFetch(`/api/subscriptions/${activity.id}/rebuild`, { method: "POST" });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setNotice(data.message ?? "订阅输出池重建失败");
+      return;
+    }
+    setNotice(`订阅输出池已重建：目标 ${data.summary?.target ?? activity.output_count} 条，当前选中 ${data.summary?.selected ?? 0} 条。`);
+    await refresh();
+  }
+
+  async function healthCheckSubscription(activity: SubscriptionActivity) {
+    setNotice(`正在执行订阅健康检查：${activity.name}`);
+    const res = await apiFetch(`/api/subscriptions/${activity.id}/health-check`, { method: "POST" });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setNotice(data.message ?? "订阅健康检查失败");
+      return;
+    }
+    setNotice(`订阅健康检查完成：替换/移除 ${data.summary?.removed ?? 0} 条，当前输出 ${data.summary?.currentCount ?? 0} 条。${data.summary?.riskMessage ?? ""}`);
+    await refresh();
+  }
+
+  async function refreshSubscriptionCache(activity: SubscriptionActivity) {
+    setNotice(`正在刷新订阅缓存：${activity.name}`);
+    const res = await apiFetch(`/api/subscriptions/${activity.id}/cache`, { method: "POST" });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setNotice(data.message ?? "订阅缓存刷新失败");
+      return;
+    }
+    setNotice(`订阅缓存已刷新：当前输出 ${data.summary?.nodeCount ?? 0} 条。${data.summary?.riskMessage ?? ""}`);
+    await refresh();
+  }
+
   async function updateFeedbackStatus(item: FeedbackItem, processStatus: string) {
     setNotice("正在更新反馈处理状态...");
     const res = await apiFetch(`/api/feedback/${item.id}`, {
@@ -798,7 +935,7 @@ function Dashboard({ user, onLogout }: { user: { username: string }; onLogout: (
         <header className="topbar">
           <div>
             <h1>{currentNav.label}</h1>
-            <p>v1.0.1：修复 Xray 队列检测、节点包兼容性和领取体验。</p>
+            <p>v1.1.0：升级为自动节点订阅池，粉丝端以 raw / base64 订阅链接为主。</p>
           </div>
           <div className="top-actions">
             <button className={videoMode ? "icon active" : "icon"} onClick={toggleVideoMode} title="公开视频模式">
@@ -854,6 +991,19 @@ function Dashboard({ user, onLogout }: { user: { username: string }; onLogout: (
 
         {activeView === "packages" && (
           <ExportPanel form={exportForm} setForm={setExportForm} exporting={exporting} onSubmit={createExport} batches={batches} videoMode={videoMode} onPublish={publishBatch} onClose={closeBatch} onDeleteDraft={deleteDraft} onPreflight={preflightBatch} />
+        )}
+
+        {activeView === "subscriptions" && (
+          <SubscriptionPanel
+            form={subscriptionForm}
+            setForm={setSubscriptionForm}
+            activities={subscriptions}
+            videoMode={videoMode}
+            onSubmit={createSubscription}
+            onRebuild={rebuildSubscription}
+            onHealthCheck={healthCheckSubscription}
+            onRefreshCache={refreshSubscriptionCache}
+          />
         )}
 
         {activeView === "claim" && (
@@ -1270,6 +1420,131 @@ function ClaimPanel({
   );
 }
 
+function SubscriptionPanel({
+  form,
+  setForm,
+  activities,
+  videoMode,
+  onSubmit,
+  onRebuild,
+  onHealthCheck,
+  onRefreshCache
+}: {
+  form: SubscriptionFormState;
+  setForm: React.Dispatch<React.SetStateAction<SubscriptionFormState>>;
+  activities: SubscriptionActivity[];
+  videoMode: boolean;
+  onSubmit: (event: React.FormEvent) => void;
+  onRebuild: (activity: SubscriptionActivity) => void;
+  onHealthCheck: (activity: SubscriptionActivity) => void;
+  onRefreshCache: (activity: SubscriptionActivity) => void;
+}) {
+  const current = activities.find((item) => item.status === "published");
+  return (
+    <section className="panel">
+      <div className="panel-title">
+        <div>
+          <h2>自动节点订阅池</h2>
+          <p className="muted compact">每期 YouTube 视频对应一个订阅活动。粉丝输入本期口令后复制 raw / base64 订阅链接，ZIP 仅保留为后台备用导出。</p>
+        </div>
+        <Link2 size={18} />
+      </div>
+      <div className="notice">订阅访问只读取缓存内容，不会触发实时采集或 Xray 检测。健康检查用于替换失效或明显劣化节点，不会每 5 分钟全量洗牌。</div>
+
+      <form className="subscription-form" onSubmit={onSubmit}>
+        <label>
+          活动名称
+          <input value={form.name} onChange={(event) => setForm((value) => ({ ...value, name: event.target.value }))} />
+        </label>
+        <label>
+          视频备注
+          <input value={form.videoNote} placeholder="例如：2026年6月第1期公开视频" onChange={(event) => setForm((value) => ({ ...value, videoNote: event.target.value }))} />
+        </label>
+        <label>
+          本期视频口令
+          <input type="password" value={form.passphrase} onChange={(event) => setForm((value) => ({ ...value, passphrase: event.target.value }))} />
+        </label>
+        <label>
+          开始时间
+          <input type="datetime-local" value={form.startsAt} onChange={(event) => setForm((value) => ({ ...value, startsAt: event.target.value }))} />
+        </label>
+        <label>
+          截止时间
+          <input type="datetime-local" value={form.expiresAt} onChange={(event) => setForm((value) => ({ ...value, expiresAt: event.target.value }))} />
+        </label>
+        <label>
+          输出节点数
+          <input type="number" min="1" max="200" value={form.outputCount} onChange={(event) => setForm((value) => ({ ...value, outputCount: Number(event.target.value) }))} />
+        </label>
+        <label>
+          目标延迟 ms
+          <input type="number" min="1" value={form.targetLatencyMs} onChange={(event) => setForm((value) => ({ ...value, targetLatencyMs: Number(event.target.value) }))} />
+        </label>
+        <label>
+          警告延迟 ms
+          <input type="number" min="1" value={form.warningLatencyMs} onChange={(event) => setForm((value) => ({ ...value, warningLatencyMs: Number(event.target.value) }))} />
+        </label>
+        <label>
+          淘汰延迟 ms
+          <input type="number" min="1" value={form.removeLatencyMs} onChange={(event) => setForm((value) => ({ ...value, removeLatencyMs: Number(event.target.value) }))} />
+        </label>
+        <label>
+          健康检查间隔分钟
+          <input type="number" min="1" value={form.healthCheckIntervalMinutes} onChange={(event) => setForm((value) => ({ ...value, healthCheckIntervalMinutes: Number(event.target.value) }))} />
+        </label>
+        <button className="primary small" type="submit"><Link2 size={16} /> 创建订阅活动</button>
+      </form>
+
+      <h3>当前订阅活动</h3>
+      <SubscriptionTable activities={current ? [current] : []} videoMode={videoMode} onRebuild={onRebuild} onHealthCheck={onHealthCheck} onRefreshCache={onRefreshCache} />
+      <h3>历史订阅活动</h3>
+      <SubscriptionTable activities={activities.filter((item) => item.id !== current?.id)} videoMode={videoMode} onRebuild={onRebuild} onHealthCheck={onHealthCheck} onRefreshCache={onRefreshCache} />
+    </section>
+  );
+}
+
+function SubscriptionTable({
+  activities,
+  videoMode,
+  onRebuild,
+  onHealthCheck,
+  onRefreshCache
+}: {
+  activities: SubscriptionActivity[];
+  videoMode: boolean;
+  onRebuild: (activity: SubscriptionActivity) => void;
+  onHealthCheck: (activity: SubscriptionActivity) => void;
+  onRefreshCache: (activity: SubscriptionActivity) => void;
+}) {
+  return (
+    <div className="table spaced">
+      <div className="table-head subscription-grid"><span>活动</span><span>状态</span><span>截止时间</span><span>输出</span><span>领取页</span><span>订阅链接</span><span>统计</span><span>操作</span></div>
+      {activities.map((activity) => {
+        const claimUrl = `/r/${activity.claim_slug}`;
+        const rawUrl = `/sub/${activity.subscription_token}/raw`;
+        const base64Url = `/sub/${activity.subscription_token}/base64`;
+        return (
+          <div className="table-row subscription-grid" key={activity.id}>
+            <span className="truncate">{activity.name}</span>
+            <span>{zhStatus(activity.status)}</span>
+            <span>{formatDate(activity.expires_at)}</span>
+            <span>{activity.output_count} 条{activity.risk_status === "insufficient" ? " / 不足" : ""}</span>
+            <span className="truncate">{videoMode ? `/r/${maskSlug(activity.claim_slug)}` : claimUrl}</span>
+            <span className="truncate">{videoMode ? `/sub/${maskSlug(activity.subscription_token)}/raw` : rawUrl}<br />{videoMode ? `/sub/${maskSlug(activity.subscription_token)}/base64` : base64Url}</span>
+            <span>访问 {activity.view_count ?? 0}<br />订阅 {Number(activity.raw_access_count ?? 0) + Number(activity.base64_access_count ?? 0)}<br />替换 {activity.last_replacement_count ?? 0}<br />IP {activity.active_ip_count ?? 0}</span>
+            <span className="row-actions">
+              <button className="link-button" type="button" onClick={() => onHealthCheck(activity)}>健康检查</button>
+              <button className="link-button" type="button" onClick={() => onRebuild(activity)}>重建池</button>
+              <button className="link-button" type="button" onClick={() => onRefreshCache(activity)}>刷新缓存</button>
+            </span>
+          </div>
+        );
+      })}
+      {!activities.length && <p className="muted">暂无订阅活动。创建活动后，粉丝可以通过公开领取页输入视频口令获取订阅链接。</p>}
+    </div>
+  );
+}
+
 function StatsPanel({ stats, channelStats }: { stats: BatchStat[]; channelStats: ChannelStat[] }) {
   return (
     <>
@@ -1437,7 +1712,7 @@ function SettingsPanel({ videoMode, onToggleVideoMode, summary }: { videoMode: b
         </button>
         <div>
           <strong>系统状态</strong>
-          <p className="muted compact">{zhStatus(summary?.systemStatus ?? "running")} / v{summary?.version ?? "1.0.1"}</p>
+          <p className="muted compact">{zhStatus(summary?.systemStatus ?? "running")} / v{summary?.version ?? "1.1.0"}</p>
         </div>
       </div>
       <div className="settings-list">
@@ -1517,7 +1792,7 @@ function PublicClaimPage({ slug }: { slug: string }) {
       return;
     }
     setUnlocked(true);
-    setMessage("口令正确，可以下载节点包。zip 解压密码就是本期口令。");
+    setMessage("口令正确，可以下载备用节点文件。");
   }
 
   async function submitFeedback(event: React.FormEvent) {
@@ -1538,7 +1813,7 @@ function PublicClaimPage({ slug }: { slug: string }) {
     <main className="public-shell">
       <section className="public-panel">
         <h1>{batch?.title ?? "节点包领取"}</h1>
-        <p>{batch?.description || "输入正确口令后即可下载加密节点包。领取页不会直接展示完整节点。"}</p>
+        <p>{batch?.description || "输入正确口令后即可领取节点内容。公开页不会展示后台来源、测试细节或完整节点池。"}</p>
         <div className="public-meta">
           <span>有效期：{batch?.expiresAt ? new Date(batch.expiresAt).toLocaleString() : "未设置"}</span>
         </div>
@@ -1555,7 +1830,7 @@ function PublicClaimPage({ slug }: { slug: string }) {
           <>
             <a className="download-button" href={`/api/public/claim/${slug}/download${window.location.search}`}>
               <Download size={18} />
-              下载加密节点包
+              下载备用节点文件
             </a>
             <div className="feedback-card">
               <h2>节点包能正常使用吗？</h2>
@@ -1596,6 +1871,176 @@ function PublicClaimPage({ slug }: { slug: string }) {
         </form>
       </section>
     </main>
+  );
+}
+
+function PublicSubscriptionClaimPage({ slug }: { slug: string }) {
+  const [batch, setBatch] = React.useState<PublicBatch | null>(null);
+  const [found, setFound] = React.useState(true);
+  const [unlocked, setUnlocked] = React.useState(false);
+  const [passphrase, setPassphrase] = React.useState("");
+  const [message, setMessage] = React.useState("");
+  const [copyMessage, setCopyMessage] = React.useState("");
+  const [feedback, setFeedback] = React.useState({
+    device: "",
+    clientApp: "",
+    issueType: "other",
+    isUsable: true,
+    note: ""
+  });
+
+  React.useEffect(() => {
+    const meta = document.createElement("meta");
+    meta.name = "robots";
+    meta.content = "noindex,nofollow";
+    document.head.appendChild(meta);
+    apiFetch(`/api/public/claim/${slug}${window.location.search}`)
+      .then((res) => res.json())
+      .then((data) => {
+        setFound(data.found);
+        setBatch(data.batch ?? null);
+        setUnlocked(Boolean(data.unlocked));
+      })
+      .catch(() => setFound(false));
+    return () => {
+      document.head.removeChild(meta);
+    };
+  }, [slug]);
+
+  async function verify(event: React.FormEvent) {
+    event.preventDefault();
+    setMessage("");
+    const res = await apiFetch(`/api/public/claim/${slug}/verify${window.location.search}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ passphrase })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      setMessage(data.message ?? "口令验证失败");
+      return;
+    }
+    setUnlocked(true);
+    setBatch((value) => value ? ({ ...value, rawUrl: data.rawUrl ?? value.rawUrl, base64Url: data.base64Url ?? value.base64Url }) : value);
+    setMessage(data.mode === "subscription" ? "口令正确，请复制 raw 或 base64 订阅链接导入客户端。" : "口令正确，可以下载备用节点文件。");
+  }
+
+  async function copyLink(value?: string | null) {
+    if (!value) {
+      setCopyMessage("暂无可复制链接");
+      return;
+    }
+    const ok = await copyText(value);
+    setCopyMessage(ok ? "链接已复制" : "复制失败，请手动复制输入框里的链接");
+  }
+
+  async function submitFeedback(event: React.FormEvent) {
+    event.preventDefault();
+    const res = await apiFetch(`/api/public/claim/${slug}/feedback${window.location.search}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(feedback)
+    });
+    setMessage(res.ok ? "反馈已提交，谢谢。" : "反馈提交失败。");
+  }
+
+  if (!found) {
+    return <main className="public-shell"><section className="public-panel"><h1>领取页不可用</h1><p>本期订阅不存在、未发布或已关闭。</p></section></main>;
+  }
+
+  const isSubscription = batch?.mode === "subscription" || Boolean(batch?.rawUrl || batch?.base64Url);
+
+  return (
+    <main className="public-shell">
+      <section className="public-panel">
+        <h1>{batch?.title ?? "免费节点订阅领取"}</h1>
+        <p>{batch?.description || "输入本期视频口令后，即可复制通用订阅链接。免费节点存在时效性，请以实际使用为准。"}</p>
+        <div className="public-meta">
+          <span>截止时间：{batch?.expiresAt ? new Date(batch.expiresAt).toLocaleString() : "未设置"}</span>
+          <span>剩余时间：{formatRemaining(batch?.remainingSeconds)}</span>
+          {batch?.outputCount ? <span>订阅输出：{batch.outputCount} 条以内</span> : null}
+        </div>
+        {batch?.riskMessage && <div className="notice">{batch.riskMessage}</div>}
+
+        {!unlocked && (
+          <form className="login-form" onSubmit={verify}>
+            <label>
+              本期订阅解锁码
+              <input type="password" value={passphrase} onChange={(event) => setPassphrase(event.target.value)} />
+            </label>
+            <button className="primary">验证并领取订阅</button>
+          </form>
+        )}
+
+        {unlocked && isSubscription && (
+          <div className="subscription-links">
+            <h2>复制订阅链接</h2>
+            <p className="muted compact">默认提供通用 raw 和 base64 订阅。需要 Clash / sing-box 专用格式的用户，可使用订阅转换工具自行转换。</p>
+            <CopyField label="raw 通用订阅" value={batch?.rawUrl ?? ""} onCopy={() => copyLink(batch?.rawUrl)} />
+            <CopyField label="base64 通用订阅" value={batch?.base64Url ?? ""} onCopy={() => copyLink(batch?.base64Url)} />
+            <p className="muted compact">免费节点存在时效性，系统会在有效期内维护并替换失效或明显劣化节点，实际体验受你的网络环境影响。</p>
+          </div>
+        )}
+
+        {unlocked && !isSubscription && (
+          <a className="download-button" href={`/api/public/claim/${slug}/download${window.location.search}`}>
+            <Download size={18} />
+            下载备用节点文件
+          </a>
+        )}
+
+        {copyMessage && <div className="notice">{copyMessage}</div>}
+        {message && <div className="notice">{message}</div>}
+
+        {unlocked && (
+          <div className="feedback-card">
+            <h2>这个订阅能正常使用吗？</h2>
+            <div className="choice-row">
+              <button type="button" className={feedback.isUsable ? "primary small" : "icon"} onClick={() => setFeedback((value) => ({ ...value, isUsable: true }))}>能用</button>
+              <button type="button" className={!feedback.isUsable && feedback.issueType !== "partial_available" ? "primary small" : "icon"} onClick={() => setFeedback((value) => ({ ...value, isUsable: false, issueType: "other" }))}>不能用</button>
+              <button type="button" className={feedback.issueType === "partial_available" ? "primary small" : "icon"} onClick={() => setFeedback((value) => ({ ...value, isUsable: false, issueType: "partial_available" }))}>部分可用</button>
+            </div>
+          </div>
+        )}
+
+        <form className="feedback-form" onSubmit={submitFeedback}>
+          <h2>遇到问题？点这里反馈</h2>
+          <select value={feedback.device} onChange={(event) => setFeedback((value) => ({ ...value, device: event.target.value }))}>
+            <option value="">选择设备系统</option>
+            <option value="Windows">Windows</option>
+            <option value="iPhone">iPhone</option>
+            <option value="Android">Android</option>
+            <option value="Mac">Mac</option>
+            <option value="其他">其他</option>
+          </select>
+          <select value={feedback.clientApp} onChange={(event) => setFeedback((value) => ({ ...value, clientApp: event.target.value }))}>
+            <option value="">选择客户端软件</option>
+            <option value="v2rayN">v2rayN</option>
+            <option value="Clash Verge">Clash Verge</option>
+            <option value="Shadowrocket">Shadowrocket</option>
+            <option value="sing-box">sing-box</option>
+            <option value="其他">其他</option>
+          </select>
+          <select value={feedback.issueType} onChange={(event) => setFeedback((value) => ({ ...value, issueType: event.target.value }))}>
+            {Object.entries(issueText).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+          </select>
+          <textarea maxLength={200} placeholder="备注，可选，最多 200 字" value={feedback.note} onChange={(event) => setFeedback((value) => ({ ...value, note: event.target.value }))} />
+          <button className="primary small">提交反馈</button>
+        </form>
+      </section>
+    </main>
+  );
+}
+
+function CopyField({ label, value, onCopy }: { label: string; value: string; onCopy: () => void }) {
+  return (
+    <label className="copy-field">
+      {label}
+      <div>
+        <input readOnly value={value} onFocus={(event) => event.currentTarget.select()} />
+        <button type="button" className="primary small" onClick={onCopy}>复制链接</button>
+      </div>
+    </label>
   );
 }
 
@@ -1770,6 +2215,45 @@ function maskUrl(url: string) {
 function maskSlug(slug: string) {
   if (slug.length <= 6) return "***";
   return `${slug.slice(0, 3)}***${slug.slice(-3)}`;
+}
+
+async function copyText(value: string) {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(value);
+      return true;
+    }
+  } catch {
+    // HTTP pages may block navigator.clipboard, fall back below.
+  }
+  try {
+    const textarea = document.createElement("textarea");
+    textarea.value = value;
+    textarea.setAttribute("readonly", "true");
+    textarea.style.position = "fixed";
+    textarea.style.left = "-9999px";
+    document.body.appendChild(textarea);
+    textarea.select();
+    const ok = document.execCommand("copy");
+    document.body.removeChild(textarea);
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
+function formatRemaining(seconds?: number) {
+  if (seconds === undefined || seconds === null) return "-";
+  if (seconds <= 0) return "已到期";
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  if (days > 0) return `${days} 天 ${hours} 小时`;
+  const minutes = Math.floor((seconds % 3600) / 60);
+  return `${hours} 小时 ${minutes} 分钟`;
+}
+
+function formatTime(value?: string | null) {
+  return formatDate(value);
 }
 
 function channelName(value?: string | null) {

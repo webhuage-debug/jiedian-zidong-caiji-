@@ -102,6 +102,29 @@ select {
   text-decoration: none;
 }
 
+.subscription-links {
+  display: grid;
+  gap: 12px;
+  margin: 18px 0;
+}
+
+.subscription-links h2 {
+  margin: 0;
+  font-size: 20px;
+}
+
+.copy-field {
+  display: grid;
+  gap: 7px;
+}
+
+.copy-field > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+
 .feedback-form {
   display: grid;
   gap: 12px;
@@ -232,6 +255,17 @@ textarea {
   min-height: 100vh;
   display: grid;
   grid-template-columns: 258px minmax(0, 1fr);
+}
+
+.subscription-form {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(160px, 1fr));
+  gap: 14px;
+  align-items: end;
+}
+
+.subscription-grid {
+  grid-template-columns: 1.3fr 0.7fr 1fr 0.8fr 1.1fr 1.4fr 0.8fr 1.2fr;
 }
 
 .sidebar {

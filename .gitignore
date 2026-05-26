@@ -9,6 +9,7 @@ data/
 storage/
 runtime/
 exports/
+sub-cache/
 node-packages/
 *.db
 *.db-*

@@ -8,11 +8,20 @@ import { db } from "./db.js";
 import { closeExportBatch, createExportBatch, createExportSchema, deleteDraftBatch, listExportBatches, preflightExportBatch, publishExportBatch } from "./exporter/exportService.js";
 import { maskUrl, redactSensitiveText } from "./security/redact.js";
 import { isPublicVideoModeEnabled, setSetting } from "./settings.js";
+import {
+  createSubscriptionActivity,
+  createSubscriptionSchema,
+  currentClaimInfo,
+  generateSubscriptionCache,
+  listSubscriptionActivities,
+  rebuildSubscriptionPool,
+  runSubscriptionHealthCheck
+} from "./subscription/subscriptionService.js";
 import { runNodeTests } from "./tester/testService.js";
 import { getXrayQueueRuntime, getXrayQueueStats, pauseXrayQueue, runXrayRealTests, stopXrayQueue, type XrayRunMode } from "./tester/xrayService.js";
 
 export function registerApiRoutes(app: FastifyInstance) {
-  app.get("/health", async () => ({ ok: true, version: "1.0.1" }));
+  app.get("/health", async () => ({ ok: true, version: "1.1.0" }));
 
   app.get("/api/dashboard/summary", { preHandler: requireAdmin }, async () => {
     const nodeCounts = db
@@ -27,7 +36,7 @@ export function registerApiRoutes(app: FastifyInstance) {
     const recentTest = db.prepare("SELECT * FROM test_runs ORDER BY started_at DESC LIMIT 1").get() as Record<string, unknown> | undefined;
 
     return {
-      version: "1.0.1",
+      version: "1.1.0",
       systemStatus: "running",
       candidateNodes: countStatus(nodeCounts, "test_passed"),
       pendingNodes: countStatus(nodeCounts, "pending_test"),
@@ -323,12 +332,16 @@ export function registerApiRoutes(app: FastifyInstance) {
     return {
       items: db
         .prepare(
-          `SELECT feedback.id, export_batches.batch_code, feedback.region, feedback.carrier,
+          `SELECT feedback.id,
+                  COALESCE(export_batches.batch_code, subscription_activities.name) AS batch_code,
+                  feedback.subscription_activity_id, feedback.subscription_token,
+                  feedback.region, feedback.carrier,
                   feedback.device, feedback.client_app, feedback.is_usable, feedback.issue_type,
                   feedback.source_platform, feedback.process_status, feedback.process_note,
                   feedback.note, feedback.created_at
            FROM feedback
            LEFT JOIN export_batches ON export_batches.id = feedback.batch_id
+           LEFT JOIN subscription_activities ON subscription_activities.id = feedback.subscription_activity_id
            ORDER BY feedback.id DESC
            LIMIT 100`
         )
@@ -363,6 +376,55 @@ export function registerApiRoutes(app: FastifyInstance) {
     const body = (request.body ?? {}) as { enabled?: boolean };
     setSetting("public_video_mode", body.enabled ? "true" : "false");
     return { enabled: Boolean(body.enabled) };
+  });
+
+  app.get("/api/subscriptions", { preHandler: requireAdmin }, async () => {
+    return { items: listSubscriptionActivities() };
+  });
+
+  app.post("/api/subscriptions", { preHandler: requireAdmin }, async (request, reply) => {
+    try {
+      const input = createSubscriptionSchema.parse(request.body);
+      const item = createSubscriptionActivity(input);
+      return { ok: true, item };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "subscription create failed";
+      return reply.code(400).send({ ok: false, message });
+    }
+  });
+
+  app.post("/api/subscriptions/:id/rebuild", { preHandler: requireAdmin }, async (request, reply) => {
+    try {
+      const { id } = request.params as { id: string };
+      return { ok: true, summary: rebuildSubscriptionPool(Number(id)) };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "subscription rebuild failed";
+      return reply.code(400).send({ ok: false, message });
+    }
+  });
+
+  app.post("/api/subscriptions/:id/health-check", { preHandler: requireAdmin }, async (request, reply) => {
+    try {
+      const { id } = request.params as { id: string };
+      return { ok: true, summary: runSubscriptionHealthCheck(Number(id)) };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "subscription health check failed";
+      return reply.code(400).send({ ok: false, message });
+    }
+  });
+
+  app.post("/api/subscriptions/:id/cache", { preHandler: requireAdmin }, async (request, reply) => {
+    try {
+      const { id } = request.params as { id: string };
+      return { ok: true, summary: generateSubscriptionCache(Number(id)) };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "subscription cache failed";
+      return reply.code(400).send({ ok: false, message });
+    }
+  });
+
+  app.get("/api/public/current-claim", async () => {
+    return { item: currentClaimInfo() };
   });
 
   app.get("/api/automation/packages", { preHandler: requireAutomationToken }, async () => {

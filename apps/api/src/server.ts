@@ -8,6 +8,7 @@ import { initializeDatabase } from "./db.js";
 import { registerAuthRoutes } from "./auth.js";
 import { registerApiRoutes } from "./routes.js";
 import { registerPublicClaimRoutes } from "./publicClaim.js";
+import { startSubscriptionMaintenance } from "./subscription/subscriptionService.js";
 
 initializeDatabase();
 
@@ -29,6 +30,11 @@ await app.register(rateLimit, {
 registerAuthRoutes(app);
 registerApiRoutes(app);
 registerPublicClaimRoutes(app);
+
+const stopSubscriptionMaintenance = startSubscriptionMaintenance(app.log);
+app.addHook("onClose", async () => {
+  stopSubscriptionMaintenance();
+});
 
 const webDist = path.resolve(process.cwd(), "apps/web/dist");
 await app.register(fastifyStatic, {
