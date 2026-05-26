@@ -135,6 +135,7 @@ type ExportBatch = {
   ip_download_limit?: number | null;
   wrong_passphrase_limit?: number | null;
   created_at?: string;
+  subscription_activity_id?: number | null;
 };
 
 type SourceItem = {
@@ -894,6 +895,24 @@ function Dashboard({ user, onLogout }: { user: { username: string }; onLogout: (
     await refresh();
   }
 
+  async function preflightSubscription(activity: SubscriptionActivity) {
+    setNotice(`正在检查订阅活动：${activity.name}（这是发布前可选检查，不会强制阻止发布）...`);
+    const res = await apiFetch(`/api/subscriptions/${activity.id}/preflight`, { method: "POST" });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setNotice(data.message ?? "订阅活动检查失败");
+      return;
+    }
+    const summary = data.summary ?? {};
+    setNotice(
+      summary.message ??
+        `订阅检查完成：当前输出 ${summary.outputCount ?? 0} 条，真实可用池 ${summary.realPoolCount ?? 0} 条，缓存${
+          summary.cacheReady ? "正常" : "未就绪"
+        }。`
+    );
+    await refresh();
+  }
+
   async function updateFeedbackStatus(item: FeedbackItem, processStatus: string) {
     setNotice("正在更新反馈处理状态...");
     const res = await apiFetch(`/api/feedback/${item.id}`, {
@@ -935,7 +954,7 @@ function Dashboard({ user, onLogout }: { user: { username: string }; onLogout: (
         <header className="topbar">
           <div>
             <h1>{currentNav.label}</h1>
-            <p>v1.1.0：升级为自动节点订阅池，粉丝端以 raw / base64 订阅链接为主。</p>
+            <p>v1.1.1：订阅领取链路修复，复制链接与发布前检查已按订阅模式完善。</p>
           </div>
           <div className="top-actions">
             <button className={videoMode ? "icon active" : "icon"} onClick={toggleVideoMode} title="公开视频模式">
@@ -1003,11 +1022,23 @@ function Dashboard({ user, onLogout }: { user: { username: string }; onLogout: (
             onRebuild={rebuildSubscription}
             onHealthCheck={healthCheckSubscription}
             onRefreshCache={refreshSubscriptionCache}
+            onPreflight={preflightSubscription}
           />
         )}
 
         {activeView === "claim" && (
-          <ClaimPanel batches={batches} videoMode={videoMode} onPublish={publishBatch} onClose={closeBatch} onDeleteDraft={deleteDraft} onPreflight={preflightBatch} />
+          <ClaimPanel
+            batches={batches}
+            activities={subscriptions}
+            videoMode={videoMode}
+            onPublish={publishBatch}
+            onClose={closeBatch}
+            onDeleteDraft={deleteDraft}
+            onPreflight={preflightBatch}
+            onSubscriptionPreflight={preflightSubscription}
+            onSubscriptionHealthCheck={healthCheckSubscription}
+            onSubscriptionRefreshCache={refreshSubscriptionCache}
+          />
         )}
 
         {activeView === "stats" && (
@@ -1394,19 +1425,28 @@ function ExportPanel({
 
 function ClaimPanel({
   batches,
+  activities,
   videoMode,
   onPublish,
   onClose,
   onDeleteDraft,
-  onPreflight
+  onPreflight,
+  onSubscriptionPreflight,
+  onSubscriptionHealthCheck,
+  onSubscriptionRefreshCache
 }: {
   batches: ExportBatch[];
+  activities: SubscriptionActivity[];
   videoMode: boolean;
   onPublish: (batch: ExportBatch) => void;
   onClose: (batch: ExportBatch) => void;
   onDeleteDraft: (batch: ExportBatch) => void;
   onPreflight: (batch: ExportBatch) => void;
+  onSubscriptionPreflight: (activity: SubscriptionActivity) => void;
+  onSubscriptionHealthCheck: (activity: SubscriptionActivity) => void;
+  onSubscriptionRefreshCache: (activity: SubscriptionActivity) => void;
 }) {
+  const publishedSubscriptions = activities.filter((activity) => activity.status === "published");
   return (
     <section className="panel">
       <div className="panel-title">
@@ -1415,6 +1455,16 @@ function ClaimPanel({
           <p className="muted compact">公开领取页只显示口令输入和领取按钮，不展示后台包列表。只有已发布批次可以领取。</p>
         </div>
       </div>
+      <h3>订阅活动（主流程）</h3>
+      <SubscriptionTableV2
+        activities={publishedSubscriptions}
+        videoMode={videoMode}
+        onRebuild={() => {}}
+        onHealthCheck={onSubscriptionHealthCheck}
+        onRefreshCache={onSubscriptionRefreshCache}
+        onPreflight={onSubscriptionPreflight}
+      />
+      <h3>旧节点包批次（备用）</h3>
       <BatchTable batches={batches} claimOnly videoMode={videoMode} onPublish={onPublish} onClose={onClose} onDeleteDraft={onDeleteDraft} onPreflight={onPreflight} />
     </section>
   );
@@ -1428,7 +1478,8 @@ function SubscriptionPanel({
   onSubmit,
   onRebuild,
   onHealthCheck,
-  onRefreshCache
+  onRefreshCache,
+  onPreflight
 }: {
   form: SubscriptionFormState;
   setForm: React.Dispatch<React.SetStateAction<SubscriptionFormState>>;
@@ -1438,6 +1489,7 @@ function SubscriptionPanel({
   onRebuild: (activity: SubscriptionActivity) => void;
   onHealthCheck: (activity: SubscriptionActivity) => void;
   onRefreshCache: (activity: SubscriptionActivity) => void;
+  onPreflight: (activity: SubscriptionActivity) => void;
 }) {
   const current = activities.find((item) => item.status === "published");
   return (
@@ -1496,9 +1548,9 @@ function SubscriptionPanel({
       </form>
 
       <h3>当前订阅活动</h3>
-      <SubscriptionTable activities={current ? [current] : []} videoMode={videoMode} onRebuild={onRebuild} onHealthCheck={onHealthCheck} onRefreshCache={onRefreshCache} />
+      <SubscriptionTableV2 activities={current ? [current] : []} videoMode={videoMode} onRebuild={onRebuild} onHealthCheck={onHealthCheck} onRefreshCache={onRefreshCache} onPreflight={onPreflight} />
       <h3>历史订阅活动</h3>
-      <SubscriptionTable activities={activities.filter((item) => item.id !== current?.id)} videoMode={videoMode} onRebuild={onRebuild} onHealthCheck={onHealthCheck} onRefreshCache={onRefreshCache} />
+      <SubscriptionTableV2 activities={activities.filter((item) => item.id !== current?.id)} videoMode={videoMode} onRebuild={onRebuild} onHealthCheck={onHealthCheck} onRefreshCache={onRefreshCache} onPreflight={onPreflight} />
     </section>
   );
 }
@@ -1541,6 +1593,90 @@ function SubscriptionTable({
         );
       })}
       {!activities.length && <p className="muted">暂无订阅活动。创建活动后，粉丝可以通过公开领取页输入视频口令获取订阅链接。</p>}
+    </div>
+  );
+}
+
+function SubscriptionTableV2({
+  activities,
+  videoMode,
+  onRebuild,
+  onHealthCheck,
+  onRefreshCache,
+  onPreflight
+}: {
+  activities: SubscriptionActivity[];
+  videoMode: boolean;
+  onRebuild: (activity: SubscriptionActivity) => void;
+  onHealthCheck: (activity: SubscriptionActivity) => void;
+  onRefreshCache: (activity: SubscriptionActivity) => void;
+  onPreflight: (activity: SubscriptionActivity) => void;
+}) {
+  const [copyNotice, setCopyNotice] = React.useState("");
+  const [manualCopyValue, setManualCopyValue] = React.useState("");
+  const [manualCopyTitle, setManualCopyTitle] = React.useState("");
+
+  async function handleCopy(label: string, value: string | null | undefined) {
+    if (!value) {
+      setCopyNotice("暂无可复制链接");
+      setManualCopyValue("");
+      setManualCopyTitle("");
+      return;
+    }
+    const copied = await copyText(value);
+    if (copied) {
+      setCopyNotice("链接已复制");
+      setManualCopyValue("");
+      setManualCopyTitle("");
+      return;
+    }
+    setCopyNotice("浏览器限制，请手动复制");
+    setManualCopyValue(value);
+    setManualCopyTitle(label);
+  }
+
+  return (
+    <div className="table spaced">
+      <div className="table-head subscription-grid"><span>活动</span><span>状态</span><span>截止时间</span><span>输出</span><span>领取页</span><span>订阅链接</span><span>统计</span><span>操作</span></div>
+      {activities.map((activity) => {
+        const claimUrl = `/r/${activity.claim_slug}`;
+        const rawUrl = `/sub/${activity.subscription_token}/raw`;
+        const base64Url = `/sub/${activity.subscription_token}/base64`;
+        const fullClaimUrl = `${window.location.origin}${claimUrl}`;
+        const fullRawUrl = `${window.location.origin}${rawUrl}`;
+        const fullBase64Url = `${window.location.origin}${base64Url}`;
+        return (
+          <div className="table-row subscription-grid" key={activity.id}>
+            <span className="truncate">{activity.name}</span>
+            <span>{zhStatus(activity.status)}</span>
+            <span>{formatDate(activity.expires_at)}</span>
+            <span>{activity.output_count} 条{activity.risk_status === "insufficient" ? " / 不足" : ""}</span>
+            <span className="truncate">{videoMode ? `/r/${maskSlug(activity.claim_slug)}` : claimUrl}</span>
+            <span className="truncate">{videoMode ? `/sub/${maskSlug(activity.subscription_token)}/raw` : rawUrl}<br />{videoMode ? `/sub/${maskSlug(activity.subscription_token)}/base64` : base64Url}</span>
+            <span>访问 {activity.view_count ?? 0}<br />订阅 {Number(activity.raw_access_count ?? 0) + Number(activity.base64_access_count ?? 0)}<br />替换 {activity.last_replacement_count ?? 0}<br />IP {activity.active_ip_count ?? 0}</span>
+            <span className="row-actions">
+              <button className="link-button" type="button" onClick={() => onPreflight(activity)}>发布前检查</button>
+              <button className="link-button" type="button" onClick={() => onHealthCheck(activity)}>健康检查</button>
+              <button className="link-button" type="button" onClick={() => onRebuild(activity)}>重建输出池</button>
+              <button className="link-button" type="button" onClick={() => onRefreshCache(activity)}>刷新缓存</button>
+              <a className="text-link" href={claimUrl} target="_blank" rel="noreferrer">预览领取页</a>
+              <button className="link-button" type="button" onClick={() => handleCopy("领取页链接", fullClaimUrl)}>复制领取页</button>
+              <button className="link-button" type="button" onClick={() => handleCopy("raw 订阅链接", fullRawUrl)}>复制 raw 订阅</button>
+              <button className="link-button" type="button" onClick={() => handleCopy("base64 订阅链接", fullBase64Url)}>复制 base64 订阅</button>
+            </span>
+          </div>
+        );
+      })}
+      {copyNotice && <p className="notice">{copyNotice}</p>}
+      {manualCopyValue && (
+        <label className="copy-field">
+          {manualCopyTitle || "手动复制链接"}
+          <div>
+            <input readOnly value={manualCopyValue} onFocus={(event) => event.currentTarget.select()} />
+          </div>
+        </label>
+      )}
+      {!activities.length && <p className="muted">暂无订阅活动。创建活动后，粉丝可通过公开领取页输入视频口令获取订阅链接。</p>}
     </div>
   );
 }
@@ -1712,7 +1848,7 @@ function SettingsPanel({ videoMode, onToggleVideoMode, summary }: { videoMode: b
         </button>
         <div>
           <strong>系统状态</strong>
-          <p className="muted compact">{zhStatus(summary?.systemStatus ?? "running")} / v{summary?.version ?? "1.1.0"}</p>
+          <p className="muted compact">{zhStatus(summary?.systemStatus ?? "running")} / v{summary?.version ?? "1.1.1"}</p>
         </div>
       </div>
       <div className="settings-list">
@@ -2091,6 +2227,25 @@ function BatchTable({
   onDeleteDraft: (batch: ExportBatch) => void;
   onPreflight: (batch: ExportBatch) => void;
 }) {
+  const [copyNotice, setCopyNotice] = React.useState("");
+  const [manualCopyValue, setManualCopyValue] = React.useState("");
+
+  async function handleCopy(value: string | null | undefined) {
+    if (!value) {
+      setCopyNotice("暂无可复制链接");
+      setManualCopyValue("");
+      return;
+    }
+    const copied = await copyText(value);
+    if (copied) {
+      setCopyNotice("链接已复制");
+      setManualCopyValue("");
+      return;
+    }
+    setCopyNotice("复制失败，请手动复制");
+    setManualCopyValue(value);
+  }
+
   return (
     <div className="table spaced">
       <div className="table-head batch-grid"><span>批次</span><span>名称</span><span>状态</span><span>档位</span><span>数量</span><span>权限</span><span>领取页 / 操作</span></div>
@@ -2110,7 +2265,7 @@ function BatchTable({
               {batch.status === "published" ? (
                 <>
                   <a className="text-link" href={claimUrl} target="_blank" rel="noreferrer">{claimOnly ? "预览" : displayUrl}</a>
-                  <button className="link-button" type="button" onClick={() => navigator.clipboard?.writeText(`${window.location.origin}${claimUrl}`)}>复制链接</button>
+                  <button className="link-button" type="button" onClick={() => handleCopy(`${window.location.origin}${claimUrl}`)}>复制链接</button>
                   <button className="link-button danger-text" type="button" onClick={() => onClose(batch)}>关闭</button>
                 </>
               ) : batch.status === "draft" ? (
@@ -2125,6 +2280,15 @@ function BatchTable({
           </div>
         );
       })}
+      {copyNotice && <p className="notice">{copyNotice}</p>}
+      {manualCopyValue && (
+        <label className="copy-field">
+          手动复制链接
+          <div>
+            <input readOnly value={manualCopyValue} onFocus={(event) => event.currentTarget.select()} />
+          </div>
+        </label>
+      )}
       {!batches.length && <p className="muted">暂无导出批次。</p>}
     </div>
   );

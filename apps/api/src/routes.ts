@@ -14,6 +14,7 @@ import {
   currentClaimInfo,
   generateSubscriptionCache,
   listSubscriptionActivities,
+  preflightSubscriptionActivity,
   rebuildSubscriptionPool,
   runSubscriptionHealthCheck
 } from "./subscription/subscriptionService.js";
@@ -21,7 +22,7 @@ import { runNodeTests } from "./tester/testService.js";
 import { getXrayQueueRuntime, getXrayQueueStats, pauseXrayQueue, runXrayRealTests, stopXrayQueue, type XrayRunMode } from "./tester/xrayService.js";
 
 export function registerApiRoutes(app: FastifyInstance) {
-  app.get("/health", async () => ({ ok: true, version: "1.1.0" }));
+  app.get("/health", async () => ({ ok: true, version: "1.1.1" }));
 
   app.get("/api/dashboard/summary", { preHandler: requireAdmin }, async () => {
     const nodeCounts = db
@@ -36,7 +37,7 @@ export function registerApiRoutes(app: FastifyInstance) {
     const recentTest = db.prepare("SELECT * FROM test_runs ORDER BY started_at DESC LIMIT 1").get() as Record<string, unknown> | undefined;
 
     return {
-      version: "1.1.0",
+      version: "1.1.1",
       systemStatus: "running",
       candidateNodes: countStatus(nodeCounts, "test_passed"),
       pendingNodes: countStatus(nodeCounts, "pending_test"),
@@ -419,6 +420,16 @@ export function registerApiRoutes(app: FastifyInstance) {
       return { ok: true, summary: generateSubscriptionCache(Number(id)) };
     } catch (error) {
       const message = error instanceof Error ? error.message : "subscription cache failed";
+      return reply.code(400).send({ ok: false, message });
+    }
+  });
+
+  app.post("/api/subscriptions/:id/preflight", { preHandler: requireAdmin }, async (request, reply) => {
+    try {
+      const { id } = request.params as { id: string };
+      return { ok: true, summary: preflightSubscriptionActivity(Number(id)) };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "subscription preflight failed";
       return reply.code(400).send({ ok: false, message });
     }
   });

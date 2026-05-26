@@ -220,6 +220,71 @@ export function runSubscriptionHealthCheck(activityId: number) {
   return { removed: badIds.length, currentCount: countActivityNodes(activityId), riskMessage: cache.riskMessage };
 }
 
+export function preflightSubscriptionActivity(activityId: number) {
+  const activity = getSubscriptionActivity(activityId);
+  if (!activity) throw new Error("subscription activity not found");
+  const now = Date.now();
+  const expiresAtTs = new Date(activity.expires_at).getTime();
+  const remainingSeconds = Math.max(0, Math.floor((expiresAtTs - now) / 1000));
+  const pool = currentActivityNodes(activityId);
+  const outputCount = pool.length;
+  const avgLatency = outputCount
+    ? Math.round(
+        pool.reduce((sum, node) => sum + (typeof node.real_latency_ms === "number" ? node.real_latency_ms : 0), 0) / outputCount
+      )
+    : null;
+  const degradedCount = pool.filter(
+    (node) => typeof node.real_latency_ms === "number" && node.real_latency_ms > activity.warning_latency_ms
+  ).length;
+  const failedCount = pool.filter((node) => node.real_latency_ms === null).length;
+  const realPool = db
+    .prepare("SELECT COUNT(*) AS count FROM nodes WHERE real_status = 'real_passed' AND eligible_for_package = 1")
+    .get() as { count: number };
+  const rawPath = cacheFile(activity.subscription_token, "raw");
+  const base64Path = cacheFile(activity.subscription_token, "base64");
+  const rawReady = fs.existsSync(rawPath);
+  const base64Ready = fs.existsSync(base64Path);
+  const cacheReady = rawReady && base64Ready;
+  const staleByAge = outputCount > 0 && pool.some((node) => {
+    if (!node.real_tested_at) return true;
+    return now - new Date(node.real_tested_at).getTime() > 30 * 60 * 1000;
+  });
+  const isExpiredNow = expiresAtTs <= now || activity.status === "expired";
+  const belowTarget = outputCount < Math.max(10, activity.output_count);
+  let message = `订阅检查完成：当前输出 ${outputCount} 条节点，raw/base64 订阅${cacheReady ? "可用" : "未就绪"}。`;
+  if (isExpiredNow) {
+    message = "本期订阅已过期，请创建新一期订阅活动。";
+  } else if (!cacheReady) {
+    message = "订阅检查完成：订阅缓存未生成，请点击“刷新缓存”或等待自动健康检查。";
+  } else if (belowTarget) {
+    message = `订阅检查完成：当前真实可用节点不足，输出 ${outputCount} 条，建议继续运行 Xray 真实检测或等待自动补位。`;
+  } else if (degradedCount > 0 || failedCount > 0 || staleByAge) {
+    message = `订阅检查完成：发现 ${degradedCount + failedCount} 条节点可能劣化或失效，建议执行健康检查替换。`;
+  }
+  return {
+    activityId: activity.id,
+    activityName: activity.name,
+    status: activity.status,
+    expiresAt: activity.expires_at,
+    remainingSeconds,
+    outputCount,
+    expectedOutputCount: activity.output_count,
+    rawReady,
+    base64Ready,
+    cacheReady,
+    cacheRefreshedAt: activity.last_cache_generated_at,
+    healthCheckedAt: activity.last_health_check_at,
+    realPoolCount: realPool.count,
+    avgRealLatencyMs: avgLatency,
+    degradedCount,
+    failedCount,
+    belowTarget,
+    staleByAge,
+    expired: isExpiredNow,
+    message
+  };
+}
+
 export function recordSubscriptionEvent(activityId: number, eventType: string, sourcePlatform: string | null, ipHash: string, userAgent: string) {
   const now = new Date().toISOString();
   db.prepare(
