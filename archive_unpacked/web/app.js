@@ -387,6 +387,71 @@ function updateSubscriptionMode() {
   $("subscriptionExpiresAt").disabled = mode === "usage";
 }
 
+function toDateTimeLocal(value) {
+  if (!value) return "";
+  return String(value).replace(" ", "T").slice(0, 16);
+}
+
+function applyClaimConfig(config = {}) {
+  $("claimYoutubeChannelUrl").value = config.youtube_channel_url || "";
+  $("claimCode").value = config.claim_code || "";
+  $("claimVersion").value = config.claim_version || "";
+  $("claimExpiresAt").value = toDateTimeLocal(config.claim_expires_at || "");
+  $("claimDailyLimit").value = config.daily_claim_limit || 1;
+  $("claimGroupDmSuccess").value = config.group_dm_success_message || "";
+  $("claimGroupDmFailed").value = config.group_dm_failed_message || "";
+  $("claimPromptMessage").value = config.claim_prompt_message || "";
+  $("claimYoutubeButtonMessage").value = config.youtube_button_message || "";
+  $("claimAskCodeMessage").value = config.ask_code_message || "";
+  $("claimWrongCodeMessage").value = config.wrong_code_message || "";
+  $("claimExpiredCodeMessage").value = config.expired_code_message || "";
+  $("claimLimitMessage").value = config.limit_message || "";
+  $("claimSuccessMessage").value = config.success_message || "";
+  $("claimVersionNotice").textContent = `当前口令版本：${config.claim_version || "未设置"}。新生成的订阅链接会绑定此版本，后续更换版本后旧链接将失效。`;
+}
+
+function claimConfigPayload() {
+  return {
+    youtube_channel_url: $("claimYoutubeChannelUrl").value,
+    claim_code: $("claimCode").value,
+    claim_version: $("claimVersion").value,
+    claim_expires_at: $("claimExpiresAt").value,
+    daily_claim_limit: $("claimDailyLimit").value,
+    group_dm_success_message: $("claimGroupDmSuccess").value,
+    group_dm_failed_message: $("claimGroupDmFailed").value,
+    claim_prompt_message: $("claimPromptMessage").value,
+    youtube_button_message: $("claimYoutubeButtonMessage").value,
+    ask_code_message: $("claimAskCodeMessage").value,
+    wrong_code_message: $("claimWrongCodeMessage").value,
+    expired_code_message: $("claimExpiredCodeMessage").value,
+    limit_message: $("claimLimitMessage").value,
+    success_message: $("claimSuccessMessage").value,
+  };
+}
+
+async function refreshClaimConfig() {
+  try {
+    const data = await jsonFetch(api("/api/claim-code/config"));
+    applyClaimConfig(data.config || {});
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+async function saveClaimConfig() {
+  try {
+    const data = await jsonFetch(api("/api/claim-code/config"), {
+      method: "POST",
+      body: JSON.stringify(claimConfigPayload()),
+    });
+    applyClaimConfig(data.config || {});
+    toast("领取口令配置已保存");
+    await refreshSubscriptions();
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
 async function refreshProcessingPreview() {
   try {
     const data = await jsonFetch(api("/api/node-processing/preview?limit=20"));
@@ -605,6 +670,8 @@ $("copySubscriptionUrl").onclick = copySubscriptionUrl;
 $("copySubscription").onclick = copySubscription;
 $("refreshSubscriptions").onclick = refreshSubscriptions;
 $("createSubscription").onclick = createSubscription;
+$("refreshClaimConfig").onclick = refreshClaimConfig;
+$("saveClaimConfig").onclick = saveClaimConfig;
 $("saveBotConfig").onclick = saveBotConfig;
 $("startBot").onclick = () => post(api("/api/bot/start")).then(refreshBot);
 $("stopBot").onclick = () => post(api("/api/bot/stop")).then(refreshBot);
@@ -642,6 +709,7 @@ async function startDashboard() {
     refreshProcessingConfig(),
     refreshProcessingPreview(),
     refreshSubscriptions(),
+    refreshClaimConfig(),
     refreshBot(),
   ]);
   refreshSubscriptionUrl();

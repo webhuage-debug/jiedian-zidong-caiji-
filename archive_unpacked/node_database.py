@@ -10,8 +10,24 @@ from typing import Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
 from app_time import beijing_timestamp
 
 
+ASIA_COUNTRIES = ("HK", "JP", "SG", "TW", "KR", "TH", "VN", "MY", "PH", "IN", "ID", "MO")
+ASIA_KEYWORDS = (
+    "香港", "日本", "新加坡", "台湾", "韓國", "韩国",
+    "hk", "jp", "sg", "tw", "kr", "hkg", "jpn", "sin", "tpe", "sel",
+    "hongkong", "hong kong", "japan", "singapore", "taiwan", "korea",
+)
+
+
 def protocol_of(uri: str) -> str:
     return uri.split("://", 1)[0].lower() if "://" in uri else ""
+
+
+def asia_priority_sql(column: str = "country") -> str:
+    cases = " ".join(
+        "WHEN UPPER(" + column + ") LIKE '%" + country + "%' THEN " + str(index)
+        for index, country in enumerate(ASIA_COUNTRIES)
+    )
+    return "CASE " + cases + " ELSE 999 END"
 
 
 class NodeDatabase:
@@ -136,12 +152,40 @@ class NodeDatabase:
                 expires_at TEXT,
                 rename_template TEXT NOT NULL DEFAULT '',
                 remark TEXT NOT NULL DEFAULT '',
+                claim_version TEXT NOT NULL DEFAULT '',
+                created_by TEXT NOT NULL DEFAULT 'manual',
+                telegram_user_id TEXT NOT NULL DEFAULT '',
+                telegram_username TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours')),
                 updated_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours')),
                 last_used_at TEXT,
                 last_used_ip TEXT NOT NULL DEFAULT ''
             );
             CREATE INDEX IF NOT EXISTS "订阅链接_状态" ON "订阅链接" (enabled, mode, expires_at);
+
+            CREATE TABLE IF NOT EXISTS "领取口令配置" (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours'))
+            );
+
+            CREATE TABLE IF NOT EXISTS "Bot领取状态" (
+                telegram_user_id TEXT PRIMARY KEY,
+                telegram_chat_id TEXT NOT NULL DEFAULT '',
+                username TEXT NOT NULL DEFAULT '',
+                state TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours'))
+            );
+
+            CREATE TABLE IF NOT EXISTS "Bot领取记录" (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                telegram_user_id TEXT NOT NULL,
+                telegram_username TEXT NOT NULL DEFAULT '',
+                claim_version TEXT NOT NULL DEFAULT '',
+                subscription_token TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours'))
+            );
+            CREATE INDEX IF NOT EXISTS "Bot领取记录_用户日期" ON "Bot领取记录" (telegram_user_id, created_at);
 
             CREATE TABLE IF NOT EXISTS "Bot配置" (
                 key TEXT PRIMARY KEY,
@@ -192,6 +236,16 @@ class NodeDatabase:
         valid_columns = {row[1] for row in self.connection.execute('PRAGMA table_info("有效节点")')}
         if "country" not in valid_columns:
             self.connection.execute('ALTER TABLE "有效节点" ADD COLUMN "country" TEXT NOT NULL DEFAULT ""')
+        subscription_columns = {row[1] for row in self.connection.execute('PRAGMA table_info("订阅链接")')}
+        subscription_migrations = {
+            "claim_version": "TEXT NOT NULL DEFAULT ''",
+            "created_by": "TEXT NOT NULL DEFAULT 'manual'",
+            "telegram_user_id": "TEXT NOT NULL DEFAULT ''",
+            "telegram_username": "TEXT NOT NULL DEFAULT ''",
+        }
+        for name, declaration in subscription_migrations.items():
+            if name not in subscription_columns:
+                self.connection.execute('ALTER TABLE "订阅链接" ADD COLUMN "' + name + '" ' + declaration)
         self.connection.execute('DELETE FROM "自动控制配置" WHERE key = "validator_limit"')
 
     def _migrate_beijing_timestamps(self) -> None:
@@ -209,6 +263,9 @@ class NodeDatabase:
             "后台会话": ("created_at", "expires_at", "last_seen_at"),
             "订阅链接": ("created_at", "updated_at", "last_used_at"),
             "Bot配置": ("updated_at",),
+            "领取口令配置": ("updated_at",),
+            "Bot领取状态": ("updated_at",),
+            "Bot领取记录": ("created_at",),
             "Bot验证任务": ("created_at", "expires_at", "completed_at"),
             "Bot消息日志": ("created_at",),
         }
@@ -343,6 +400,56 @@ class NodeDatabase:
         for row in rows:
             yield row[0]
 
+    def iter_asia_candidate_nodes(self, protocols: Sequence[str] = (), revalidate: bool = False) -> Iterator[str]:
+        clauses = []
+        params = []
+        if protocols:
+            placeholders = ",".join("?" for _ in protocols)
+            clauses.append("protocol IN (" + placeholders + ")")
+            params.extend(protocol.lower() for protocol in protocols)
+        if not revalidate:
+            clauses.append("validation_status = '未验证'")
+        country_clauses = []
+        for country in ASIA_COUNTRIES:
+            country_clauses.append("UPPER(proxy_ips) LIKE ?")
+            params.append("%" + country + "%")
+        keyword_clauses = []
+        for keyword in ASIA_KEYWORDS:
+            keyword_clauses.extend(["LOWER(uri) LIKE ?", "LOWER(source) LIKE ?", "LOWER(repo) LIKE ?"])
+            value = "%" + keyword.lower() + "%"
+            params.extend([value, value, value])
+        clauses.append("(" + " OR ".join(country_clauses + keyword_clauses) + ")")
+        sql = 'SELECT uri FROM "节点库"'
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        sql += " ORDER BY validation_count ASC, rowid"
+        rows = self.connection.execute(sql, params)
+        for row in rows:
+            yield row[0]
+
+    def iter_valid_nodes_for_recheck(self, protocols: Sequence[str] = ()) -> Iterator[str]:
+        clauses = []
+        params = []
+        if protocols:
+            placeholders = ",".join("?" for _ in protocols)
+            clauses.append("protocol IN (" + placeholders + ")")
+            params.extend(protocol.lower() for protocol in protocols)
+        sql = 'SELECT uri FROM "有效节点"'
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        sql += " ORDER BY last_validated ASC, validation_count ASC, seconds ASC, rowid ASC"
+        rows = self.connection.execute(sql, params)
+        for row in rows:
+            yield row[0]
+
+    def valid_asia_count(self) -> int:
+        clauses = ["UPPER(country) LIKE ?" for _ in ASIA_COUNTRIES]
+        params = ["%" + country + "%" for country in ASIA_COUNTRIES]
+        return self.connection.execute(
+            'SELECT COUNT(*) FROM "有效节点" WHERE ' + " OR ".join(clauses),
+            params,
+        ).fetchone()[0]
+
     def stats(self) -> Dict[str, object]:
         statuses = dict(self.connection.execute(
             'SELECT validation_status, COUNT(*) FROM "节点库" GROUP BY validation_status'
@@ -356,13 +463,18 @@ class NodeDatabase:
         protocols = dict(self.connection.execute(
             'SELECT protocol, COUNT(*) FROM "节点库" GROUP BY protocol ORDER BY COUNT(*) DESC'
         ))
+        countries = dict(self.connection.execute(
+            'SELECT country, COUNT(*) FROM "有效节点" WHERE country != "" GROUP BY country ORDER BY COUNT(*) DESC'
+        ))
         return {
             "total_nodes": self.count("节点库"),
             "valid_nodes": valid_count,
+            "valid_asia_nodes": self.valid_asia_count(),
             "invalid_nodes": invalid_count,
             "duplicate_filtered": self.counter("duplicate_filtered"),
             "statuses": statuses,
             "protocols": protocols,
+            "countries": countries,
         }
 
     def counter(self, key: str) -> int:
@@ -690,10 +802,12 @@ class NodeDatabase:
         """
         if clauses:
             sql += " WHERE " + " AND ".join(clauses)
-        sql += """
-            ORDER BY last_validated DESC, rowid DESC
-            LIMIT ? OFFSET ?
-        """
+        sql += (
+            "\n            ORDER BY "
+            + asia_priority_sql()
+            + ", seconds ASC, last_validated DESC, validation_count DESC, rowid DESC\n"
+            "            LIMIT ? OFFSET ?\n"
+        )
         params.extend([limit, offset])
         rows = self.connection.execute(
             sql,
@@ -717,7 +831,7 @@ class NodeDatabase:
             """
             SELECT uri, protocol, proxy_ips, seconds, last_validated, validation_count, country
             FROM "有效节点"
-            ORDER BY last_validated DESC, rowid DESC
+            ORDER BY """ + asia_priority_sql() + """, seconds ASC, last_validated DESC, validation_count DESC, rowid DESC
             """
         )
         return [
@@ -742,16 +856,25 @@ class NodeDatabase:
         expires_at: Optional[str] = None,
         rename_template: str = "",
         remark: str = "",
+        claim_version: str = "",
+        created_by: str = "manual",
+        telegram_user_id: str = "",
+        telegram_username: str = "",
     ) -> Dict[str, object]:
         if mode not in ("usage", "time", "either"):
             raise ValueError("unknown subscription mode: " + mode)
         self.connection.execute(
             """
             INSERT INTO "订阅链接" (
-                token, name, mode, max_uses, expires_at, rename_template, remark, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, BEIJING_TIMESTAMP(), BEIJING_TIMESTAMP())
+                token, name, mode, max_uses, expires_at, rename_template, remark,
+                claim_version, created_by, telegram_user_id, telegram_username,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, BEIJING_TIMESTAMP(), BEIJING_TIMESTAMP())
             """,
-            (token, name, mode, max_uses, expires_at, rename_template, remark),
+            (
+                token, name, mode, max_uses, expires_at, rename_template, remark,
+                claim_version, created_by, telegram_user_id, telegram_username,
+            ),
         )
         self.connection.commit()
         return self.subscription_link(token) or {}
@@ -760,7 +883,8 @@ class NodeDatabase:
         row = self.connection.execute(
             """
             SELECT token, name, mode, enabled, max_uses, used_count, expires_at,
-                   rename_template, remark, created_at, updated_at, last_used_at, last_used_ip
+                   rename_template, remark, created_at, updated_at, last_used_at, last_used_ip,
+                   claim_version, created_by, telegram_user_id, telegram_username
             FROM "订阅链接"
             WHERE token = ?
             """,
@@ -772,7 +896,8 @@ class NodeDatabase:
         rows = self.connection.execute(
             """
             SELECT token, name, mode, enabled, max_uses, used_count, expires_at,
-                   rename_template, remark, created_at, updated_at, last_used_at, last_used_ip
+                   rename_template, remark, created_at, updated_at, last_used_at, last_used_ip,
+                   claim_version, created_by, telegram_user_id, telegram_username
             FROM "订阅链接"
             ORDER BY created_at DESC, rowid DESC
             LIMIT ?
@@ -823,7 +948,135 @@ class NodeDatabase:
             "updated_at": row[10],
             "last_used_at": row[11],
             "last_used_ip": row[12],
+            "claim_version": row[13],
+            "created_by": row[14],
+            "telegram_user_id": row[15],
+            "telegram_username": row[16],
         }
+
+    def claim_config_defaults(self) -> Dict[str, object]:
+        return {
+            "youtube_channel_url": "",
+            "claim_code": "",
+            "claim_version": "一期",
+            "claim_expires_at": "",
+            "daily_claim_limit": 1,
+            "group_dm_success_message": "已私发你领取说明，请查收。",
+            "group_dm_failed_message": "我还不能私发你。请先私聊机器人发送 /start，然后回群重新发送“我要节点”。",
+            "claim_prompt_message": "请先订阅我的 YouTube 频道，并在最新的免费节点领取视频中找到本期领取口令。",
+            "youtube_button_message": "请打开我的 YouTube 频道，观看最新的免费节点领取视频，并在视频中找到本期领取口令。",
+            "ask_code_message": "请发送你在 YouTube 最新免费节点领取视频中看到的领取口令。",
+            "wrong_code_message": "口令不正确，请回到 YouTube 频道，查看最新免费节点领取视频中的领取口令。",
+            "expired_code_message": "本期领取口令已过期，请前往 YouTube 频道查看最新免费节点领取视频，获取新的领取口令。",
+            "limit_message": "你今天已经领取过，请明天再来。",
+            "success_message": "验证成功，下面是你的专属订阅链接。",
+        }
+
+    def claim_config(self) -> Dict[str, object]:
+        config = self.claim_config_defaults()
+        rows = dict(self.connection.execute('SELECT key, value FROM "领取口令配置"'))
+        config.update({key: value for key, value in rows.items() if key in config})
+        try:
+            config["daily_claim_limit"] = max(1, min(int(config["daily_claim_limit"]), 100))
+        except (TypeError, ValueError):
+            config["daily_claim_limit"] = 1
+        return config
+
+    def update_claim_config(self, values: Dict[str, object]) -> Dict[str, object]:
+        defaults = self.claim_config_defaults()
+        current = self.claim_config()
+        cleaned = {}
+        for key in defaults:
+            if key not in values:
+                continue
+            value = values[key]
+            if key == "daily_claim_limit":
+                value = max(1, min(int(value), 100))
+            else:
+                value = str(value).strip()
+                if key == "youtube_channel_url" and value and not value.startswith(("http://", "https://")):
+                    value = "https://" + value
+            cleaned[key] = value
+        if "claim_code" in cleaned:
+            old_code = str(current.get("claim_code", ""))
+            old_version = str(current.get("claim_version", ""))
+            next_version = str(cleaned.get("claim_version", old_version))
+            if cleaned["claim_code"] != old_code and next_version == old_version:
+                cleaned["claim_version"] = "口令-" + self.connection.execute("SELECT strftime('%Y%m%d%H%M%S', 'now', '+8 hours')").fetchone()[0]
+        if cleaned:
+            self.connection.executemany(
+                """
+                INSERT INTO "领取口令配置" (key, value, updated_at)
+                VALUES (?, ?, BEIJING_TIMESTAMP())
+                ON CONFLICT(key) DO UPDATE SET
+                    value = excluded.value,
+                    updated_at = BEIJING_TIMESTAMP()
+                """,
+                [(key, str(value)) for key, value in cleaned.items()],
+            )
+            self.connection.commit()
+        return self.claim_config()
+
+    def set_bot_claim_state(self, telegram_user_id: str, telegram_chat_id: str, username: str, state: str) -> None:
+        self.connection.execute(
+            """
+            INSERT INTO "Bot领取状态" (telegram_user_id, telegram_chat_id, username, state, updated_at)
+            VALUES (?, ?, ?, ?, BEIJING_TIMESTAMP())
+            ON CONFLICT(telegram_user_id) DO UPDATE SET
+                telegram_chat_id = excluded.telegram_chat_id,
+                username = excluded.username,
+                state = excluded.state,
+                updated_at = BEIJING_TIMESTAMP()
+            """,
+            (telegram_user_id, telegram_chat_id, username, state),
+        )
+        self.connection.commit()
+
+    def bot_claim_state(self, telegram_user_id: str) -> Dict[str, object]:
+        row = self.connection.execute(
+            """
+            SELECT telegram_user_id, telegram_chat_id, username, state, updated_at
+            FROM "Bot领取状态"
+            WHERE telegram_user_id = ?
+            """,
+            (telegram_user_id,),
+        ).fetchone()
+        if not row:
+            return {}
+        return {
+            "telegram_user_id": row[0],
+            "telegram_chat_id": row[1],
+            "username": row[2],
+            "state": row[3],
+            "updated_at": row[4],
+        }
+
+    def clear_bot_claim_state(self, telegram_user_id: str) -> None:
+        self.connection.execute('DELETE FROM "Bot领取状态" WHERE telegram_user_id = ?', (telegram_user_id,))
+        self.connection.commit()
+
+    def bot_claim_count_today(self, telegram_user_id: str, claim_version: str) -> int:
+        row = self.connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM "Bot领取记录"
+            WHERE telegram_user_id = ?
+              AND claim_version = ?
+              AND date(created_at) = date(BEIJING_TIMESTAMP())
+            """,
+            (telegram_user_id, claim_version),
+        ).fetchone()
+        return int(row[0] or 0)
+
+    def record_bot_claim(self, telegram_user_id: str, telegram_username: str, claim_version: str, subscription_token: str) -> None:
+        self.connection.execute(
+            """
+            INSERT INTO "Bot领取记录" (telegram_user_id, telegram_username, claim_version, subscription_token, created_at)
+            VALUES (?, ?, ?, ?, BEIJING_TIMESTAMP())
+            """,
+            (telegram_user_id, telegram_username, claim_version, subscription_token),
+        )
+        self.connection.commit()
 
     def bot_config_defaults(self) -> Dict[str, object]:
         return {

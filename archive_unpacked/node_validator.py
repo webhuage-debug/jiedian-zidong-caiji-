@@ -6,10 +6,12 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import os
 import random
 import re
 import socket
 import subprocess
+import sys
 import tempfile
 import time
 import urllib.parse
@@ -24,6 +26,21 @@ from geoip_resolver import GeoIPResolver
 DEFAULT_MAX_BATCH = 50
 SUPPORTED = {"vless", "vmess", "trojan", "ss", "socks", "socks5"}
 PROXY_IPS_RE = re.compile(r"出口 ([^;]+)")
+
+
+def safe_print(message: str) -> None:
+    encoding = sys.stdout.encoding or "utf-8"
+    print(str(message).encode(encoding, errors="replace").decode(encoding, errors="replace"), flush=True)
+
+
+def default_xray_path() -> Path:
+    path = Path("tools/xray/xray")
+    exe_path = Path("tools/xray/xray.exe")
+    if exe_path.exists():
+        return exe_path
+    if path.exists():
+        return path
+    return path
 
 
 def decode_b64(value: str) -> str:
@@ -204,44 +221,51 @@ def validate_node(
     round_delay: float,
 ) -> Tuple[str, str, float]:
     started = time.monotonic()
+    config_path = ""
     try:
         port = free_port()
-        with tempfile.NamedTemporaryFile("w", suffix=".json", encoding="utf-8") as handle:
+        fd, config_path = tempfile.mkstemp(suffix=".json")
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
             json.dump(config_for(node, port), handle)
-            handle.flush()
-            checked = subprocess.run([str(xray), "run", "-test", "-c", handle.name], capture_output=True, text=True, timeout=5)
-            if checked.returncode:
-                return "无效", "Xray 配置错误: " + (checked.stderr or checked.stdout).strip()[-300:], time.monotonic() - started
-            process = subprocess.Popen([str(xray), "run", "-c", handle.name], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+        checked = subprocess.run([str(xray), "run", "-test", "-c", config_path], capture_output=True, text=True, timeout=5)
+        if checked.returncode:
+            return "无效", "Xray 配置错误: " + (checked.stderr or checked.stdout).strip()[-300:], time.monotonic() - started
+        process = subprocess.Popen([str(xray), "run", "-c", config_path], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+        try:
+            time.sleep(0.25)
+            if process.poll() is not None:
+                return "无效", "Xray 启动失败: " + (process.stderr.read() if process.stderr else "")[-300:], time.monotonic() - started
+            proxy_ips = set()
+            for round_number in range(1, rounds + 1):
+                for probe_url in probe_urls:
+                    ok, reason, trace_ip = run_probe(port, probe_url, timeout)
+                    if not ok:
+                        return "无效", "第 " + str(round_number) + " 轮 " + probe_url + " => " + reason, time.monotonic() - started
+                    if trace_ip:
+                        proxy_ips.add(trace_ip)
+                if round_number < rounds and round_delay:
+                    time.sleep(round_delay)
+            if not proxy_ips:
+                return "无效", "未获取代理出口 IP", time.monotonic() - started
+            if direct_ip and direct_ip in proxy_ips:
+                return "无效", "代理出口 IP 与本机直连 IP 相同: " + direct_ip, time.monotonic() - started
+            return "有效", "稳定代理检查通过: " + str(rounds) + " 轮; 出口 " + ",".join(sorted(proxy_ips)), time.monotonic() - started
+        finally:
+            process.terminate()
             try:
-                time.sleep(0.25)
-                if process.poll() is not None:
-                    return "无效", "Xray 启动失败: " + (process.stderr.read() if process.stderr else "")[-300:], time.monotonic() - started
-                proxy_ips = set()
-                for round_number in range(1, rounds + 1):
-                    for probe_url in probe_urls:
-                        ok, reason, trace_ip = run_probe(port, probe_url, timeout)
-                        if not ok:
-                            return "无效", "第 " + str(round_number) + " 轮 " + probe_url + " => " + reason, time.monotonic() - started
-                        if trace_ip:
-                            proxy_ips.add(trace_ip)
-                    if round_number < rounds and round_delay:
-                        time.sleep(round_delay)
-                if not proxy_ips:
-                    return "无效", "未获取代理出口 IP", time.monotonic() - started
-                if direct_ip in proxy_ips:
-                    return "无效", "代理出口 IP 与本机直连 IP 相同: " + direct_ip, time.monotonic() - started
-                return "有效", "稳定代理检查通过: " + str(rounds) + " 轮; 出口 " + ",".join(sorted(proxy_ips)), time.monotonic() - started
-            finally:
-                process.terminate()
-                try:
-                    process.wait(timeout=2)
-                except subprocess.TimeoutExpired:
-                    process.kill()
+                process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                process.kill()
     except (ValueError, KeyError, json.JSONDecodeError, UnicodeDecodeError) as exc:
         return "无效", str(exc), time.monotonic() - started
     except subprocess.TimeoutExpired:
         return "无效", "验证超时", time.monotonic() - started
+    finally:
+        if config_path:
+            try:
+                os.unlink(config_path)
+            except OSError:
+                pass
 
 
 def proxy_ips_from_reason(reason: str) -> str:
@@ -251,13 +275,15 @@ def proxy_ips_from_reason(reason: str) -> str:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--xray", type=Path, default=Path("tools/xray/xray"))
+    parser.add_argument("--xray", type=Path, default=default_xray_path())
     parser.add_argument("--database", type=Path, default=Path("data/nodes.db"))
     parser.add_argument("--limit", type=int, default=50, help="batch size, hard-capped at 50")
     parser.add_argument("--max-batch", type=int, default=DEFAULT_MAX_BATCH, help="maximum allowed batch size")
     parser.add_argument("--protocol", action="append", help="only validate this URI scheme; repeat for multiple schemes")
     parser.add_argument("--random", action="store_true", help="randomly sample eligible nodes")
     parser.add_argument("--revalidate", action="store_true", help="include nodes that already have a validation result")
+    parser.add_argument("--valid-only", action="store_true", help="recheck nodes that are currently valid")
+    parser.add_argument("--asia-first", action="store_true", help="prefer Asian node candidates before global candidates")
     parser.add_argument("--seed", type=int, help="random seed for reproducible sampling")
     parser.add_argument("--timeout", type=int, default=8)
     parser.add_argument("--workers", type=int, default=10, help="concurrent Xray validators")
@@ -276,12 +302,23 @@ def main() -> int:
         "https://www.cloudflare.com/cdn-cgi/trace",
         "https://speed.cloudflare.com/__down?bytes=32768",
     ]
-    direct_ip = curl_trace_ip(args.timeout)
-    print("本机直连出口 IP: " + direct_ip, flush=True)
+    try:
+        direct_ip = curl_trace_ip(args.timeout)
+        safe_print("本机直连出口 IP: " + direct_ip)
+    except RuntimeError as error:
+        direct_ip = ""
+        safe_print("无法获取本机直连出口 IP，继续验证节点: " + str(error))
     database = NodeDatabase(args.database)
     geoip = GeoIPResolver(args.xray.parent / "geoip.dat")
     protocols = {item.lower() for item in (args.protocol or [])}
-    eligible = list(database.iter_nodes(sorted(protocols), args.revalidate))
+    if args.valid_only:
+        eligible = list(database.iter_valid_nodes_for_recheck(sorted(protocols)))
+    elif args.asia_first:
+        asia = list(database.iter_asia_candidate_nodes(sorted(protocols), args.revalidate))
+        global_nodes = list(database.iter_nodes(sorted(protocols), args.revalidate))
+        eligible = list(dict.fromkeys(asia + global_nodes))
+    else:
+        eligible = list(database.iter_nodes(sorted(protocols), args.revalidate))
     if args.random:
         random.Random(args.seed).shuffle(eligible)
     batch = eligible[:min(max(args.limit, 0), args.max_batch)]
@@ -306,10 +343,10 @@ def main() -> int:
                 proxy_ips = proxy_ips_from_reason(reason)
                 country = geoip.country_for_ips(proxy_ips) if status == "有效" else ""
                 database.record_validation(node, status, reason, seconds, proxy_ips, country)
-                print(f"[{index}/{len(batch)}] {status} {reason} {node}", flush=True)
+                safe_print(f"[{index}/{len(batch)}] {status} {reason} {node}")
     finally:
         database.close()
-    print("本批完成: " + str(len(batch)) + " 条", flush=True)
+    safe_print("本批完成: " + str(len(batch)) + " 条")
     return 0
 
 

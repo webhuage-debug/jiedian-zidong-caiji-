@@ -4,12 +4,14 @@
 from __future__ import annotations
 
 import json
+import os
 import secrets
 import signal
 import sys
 import threading
 import time
 import urllib.parse
+import urllib.request
 from datetime import datetime, timedelta
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -37,6 +39,14 @@ ROOT = CONFIG.root
 DATABASE = CONFIG.database
 WEB_ROOT = CONFIG.web_root
 ADMIN_BASE_PATH = CONFIG.admin_base_path
+SUBCONVERTER_URL = os.environ.get("HUAGE_SUBCONVERTER_URL", "http://127.0.0.1:25500").rstrip("/")
+DIRECT_SUBSCRIPTION_TARGETS = {"", "v2ray", "v2rayn", "v2rayng", "shadowrocket"}
+CONVERTED_SUBSCRIPTION_TARGETS = {
+    "clash": {"target": "clash"},
+    "singbox": {"target": "singbox"},
+    "surge": {"target": "surge", "ver": "4"},
+}
+ASIA_VALID_LOW_WATERMARK = int(os.environ.get("HUAGE_ASIA_VALID_LOW_WATERMARK", "10"))
 
 
 LOG_BUS = LogBus(CONFIG.log_buffer_size, CONFIG.runtime_log)
@@ -133,10 +143,15 @@ def build_validator_command(payload: dict) -> List[str]:
         "--max-batch", str(limit),
         "--rounds", str(rounds),
         "--timeout", str(timeout),
-        "--random",
     ]
+    if not payload.get("valid_only"):
+        command.append("--random")
     if payload.get("revalidate"):
         command.append("--revalidate")
+    if payload.get("valid_only"):
+        command.append("--valid-only")
+    if payload.get("asia_first"):
+        command.append("--asia-first")
     return command
 
 
@@ -308,6 +323,7 @@ class AutoController:
         collector_running = task_is_running("collector")
         validator_running = task_is_running("validator")
         valid_count = int(stats.get("valid_nodes", 0))
+        asia_valid_count = int(stats.get("valid_asia_nodes", 0))
         pending_count = int(stats.get("total_nodes", 0))
         if collector_running and validator_running:
             TASKS["validator"].stop()
@@ -323,6 +339,9 @@ class AutoController:
                 self._set("collecting", "正在采集：新增入库 " + str(inserted) + "/" + str(target))
             return
         if validator_running:
+            if self.phase == "rechecking":
+                self._set("rechecking", "正在复检现有有效节点")
+                return
             current = max(0, valid_count - self.validate_baseline)
             target = int(config["validate_valid_target"])
             if current >= target:
@@ -344,13 +363,30 @@ class AutoController:
                 return
             self._set("idle", "本轮自动任务结束：节点库暂无可验证节点")
             return
+        if self.phase == "rechecking":
+            if valid_count < int(config["valid_low_watermark"]) or asia_valid_count < ASIA_VALID_LOW_WATERMARK:
+                if pending_count > 0:
+                    self._start_validator(config, valid_count, "复检后有效节点或亚洲节点低于阈值，正在从节点库优先补齐亚洲线路", asia_first=True)
+                    return
+                self._start_collector(config, valid_count)
+                return
+            self._set("idle", "复检完成，有效节点数量充足")
+            return
         if valid_count < int(config["valid_low_watermark"]):
             if pending_count > 0:
-                self._start_validator(config, valid_count, "有效节点低于阈值，但节点库仍有待验证库存，优先启动验证")
+                asia_first = asia_valid_count < ASIA_VALID_LOW_WATERMARK
+                reason = "有效节点低于阈值，正在优先补齐亚洲线路" if asia_first else "有效节点低于阈值，但节点库仍有待验证库存，优先启动验证"
+                self._start_validator(config, valid_count, reason, asia_first=asia_first)
                 return
             self._start_collector(config, valid_count)
             return
-        self._set("idle", "有效节点数量充足，等待下一次阈值检查")
+        if asia_valid_count < ASIA_VALID_LOW_WATERMARK:
+            if pending_count > 0:
+                self._start_validator(config, valid_count, "亚洲有效节点不足，正在优先验证亚洲候选线路", asia_first=True)
+                return
+            self._start_collector(config, valid_count)
+            return
+        self._start_valid_recheck(config, valid_count)
 
     def _start_collector(self, config: dict, valid_count: int) -> None:
         payload = {
@@ -372,12 +408,13 @@ class AutoController:
         else:
             self._set("idle", "自动采集未启动：" + reason)
 
-    def _start_validator(self, config: dict, valid_count: int, reason_text: str) -> None:
+    def _start_validator(self, config: dict, valid_count: int, reason_text: str, asia_first: bool = False) -> None:
         payload = {
             "workers": config["validator_workers"],
             "limit": self._auto_validator_limit(config),
             "rounds": config["validator_rounds"],
             "timeout": config["validator_timeout"],
+            "asia_first": asia_first,
         }
         with self.lock:
             if self.phase not in ("collecting", "stopping_collector", "validating", "stopping_validator"):
@@ -391,9 +428,30 @@ class AutoController:
         else:
             self._set("idle", "自动验证未启动：" + reason)
 
+    def _start_valid_recheck(self, config: dict, valid_count: int) -> None:
+        payload = {
+            "workers": config["validator_workers"],
+            "limit": self._auto_recheck_limit(valid_count),
+            "rounds": config["validator_rounds"],
+            "timeout": config["validator_timeout"],
+            "valid_only": True,
+        }
+        with self.lock:
+            self.validate_baseline = valid_count
+            self.validate_target = 0
+            self.started_at = time.time()
+        changed, reason = start_managed_task("validator", build_validator_command(payload), "auto")
+        if changed:
+            self._set("rechecking", "有效节点数量充足，已启动本轮有效节点复检")
+        else:
+            self._set("idle", "自动复检未启动：" + reason)
+
     def _auto_validator_limit(self, config: dict) -> int:
         target = int(config["validate_valid_target"])
         return min(1000, max(50, target * 5))
+
+    def _auto_recheck_limit(self, valid_count: int) -> int:
+        return min(10, max(1, valid_count))
 
     def _set(self, phase: str, reason: str) -> None:
         should_emit = False
@@ -422,7 +480,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if parsed.path == "/healthz":
             return self.send_json(self.health_status())
         if parsed.path.startswith("/sub/"):
-            return self.public_subscription(parsed.path)
+            return self.public_subscription(parsed.path, parsed.query)
         if parsed.path.startswith("/verify/"):
             return self.bot_verification_page(parsed.path)
         route = self.admin_route(parsed.path)
@@ -462,6 +520,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if route == "/api/subscriptions":
             with NodeDatabase(DATABASE) as database:
                 return self.send_json({"subscriptions": self.decorate_subscription_links(database.subscription_links())})
+        if route == "/api/claim-code/config":
+            with NodeDatabase(DATABASE) as database:
+                return self.send_json({"config": database.claim_config()})
         if route == "/api/bot":
             with NodeDatabase(DATABASE) as database:
                 config = database.bot_config(mask_secrets=True)
@@ -591,6 +652,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return self.send_json({"cleared": True})
         if route == "/api/subscriptions":
             return self.create_subscription(payload)
+        if route == "/api/claim-code/config":
+            return self.update_claim_config(payload)
         if route.startswith("/api/subscriptions/"):
             token = route.removeprefix("/api/subscriptions/").strip("/")
             if route.endswith("/disable"):
@@ -637,10 +700,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
             "tasks": {name: task.status()["running"] for name, task in TASKS.items()},
         }
 
-    def public_subscription(self, path: str) -> None:
+    def public_subscription(self, path: str, query: str = "") -> None:
         token = path.removeprefix("/sub/").strip("/")
         if not token or "/" in token:
             return self.send_json({"error": "not found"}, HTTPStatus.NOT_FOUND)
+        params = urllib.parse.parse_qs(query)
+        target = str(params.get("target", [""])[0]).strip().lower()
+        if target not in DIRECT_SUBSCRIPTION_TARGETS and target not in CONVERTED_SUBSCRIPTION_TARGETS:
+            return self.send_json({"error": "不支持的订阅格式"}, HTTPStatus.BAD_REQUEST)
         with NodeDatabase(DATABASE) as database:
             link = database.subscription_link(token)
             if not link:
@@ -648,13 +715,31 @@ class DashboardHandler(BaseHTTPRequestHandler):
             available, status, reason = self.subscription_available(link)
             if not available:
                 return self.send_json({"error": reason}, status)
+            if target in CONVERTED_SUBSCRIPTION_TARGETS:
+                return self.convert_subscription(token, target, str(link["name"]))
             config = database.processing_config()
             template = link["rename_template"] or config["rename_template"]
             nodes = database.all_valid_nodes()
             result = subscription_base64(nodes, template)
             database.touch_subscription_link(token, self.client_ip())
-        LOG_BUS.emit("subscription", "订阅已访问 | " + str(link["name"]) + " | 节点 " + str(result["count"]), "info")
+        LOG_BUS.emit("subscription", "订阅已访问 | " + str(link["name"]) + " | 格式 " + (target or "v2ray") + " | 节点 " + str(result["count"]), "info")
         return self.send_text(result["subscription"] + "\n", "text/plain; charset=utf-8")
+
+    def convert_subscription(self, token: str, target: str, name: str) -> None:
+        source_url = self.public_origin().rstrip("/") + "/sub/" + token
+        if not source_url.startswith("http"):
+            source_url = "http://" + CONFIG.host + ":" + str(CONFIG.port) + "/sub/" + token
+        options = dict(CONVERTED_SUBSCRIPTION_TARGETS[target])
+        options["url"] = source_url
+        converter_url = SUBCONVERTER_URL + "/sub?" + urllib.parse.urlencode(options)
+        try:
+            with urllib.request.urlopen(converter_url, timeout=30) as response:
+                body = response.read().decode("utf-8", errors="replace")
+        except OSError as error:
+            LOG_BUS.emit("subscription", "订阅转换失败 | " + target + " | " + str(error), "error")
+            return self.send_json({"error": "订阅转换服务不可用，请稍后再试"}, HTTPStatus.BAD_GATEWAY)
+        LOG_BUS.emit("subscription", "订阅已转换 | " + name + " | 格式 " + target, "info")
+        return self.send_text(body, "text/plain; charset=utf-8")
 
     def bot_verification_page(self, path: str) -> None:
         token = path.removeprefix("/verify/").strip("/")
@@ -703,6 +788,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def subscription_available(self, link: dict) -> tuple[bool, HTTPStatus, str]:
         if not link["enabled"]:
             return False, HTTPStatus.FORBIDDEN, "订阅链接已禁用"
+        link_version = str(link.get("claim_version") or "")
+        if link_version:
+            with NodeDatabase(DATABASE) as database:
+                current_version = str(database.claim_config().get("claim_version") or "")
+            if current_version and link_version != current_version:
+                return False, HTTPStatus.GONE, "领取口令已更新，请重新领取订阅链接"
         if link["mode"] in ("usage", "either"):
             max_uses = int(link["max_uses"] or 0)
             if max_uses <= 0 or int(link["used_count"] or 0) >= max_uses:
@@ -743,10 +834,46 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return self.send_json({"error": "失效方式只能是次数、时间或任一条件"}, HTTPStatus.BAD_REQUEST)
         token = secrets.token_hex(16)
         with NodeDatabase(DATABASE) as database:
-            link = database.create_subscription_link(token, name, mode, max_uses, expires_at, template, remark)
+            claim_version = str(database.claim_config().get("claim_version") or "")
+            link = database.create_subscription_link(
+                token, name, mode, max_uses, expires_at, template, remark,
+                claim_version=claim_version,
+            )
             decorated = self.decorate_subscription_link(link)
         LOG_BUS.emit("subscription", "已生成订阅链接 | " + name + " | " + decorated["url"], "success")
         return self.send_json({"subscription": decorated})
+
+    def update_claim_config(self, payload: dict) -> None:
+        values = {
+            "youtube_channel_url": str(payload.get("youtube_channel_url", "")).strip(),
+            "claim_code": str(payload.get("claim_code", "")).strip(),
+            "claim_version": str(payload.get("claim_version", "")).strip(),
+            "claim_expires_at": str(payload.get("claim_expires_at", "")).strip(),
+            "daily_claim_limit": int_value(payload, "daily_claim_limit", 1, 1, 100),
+            "group_dm_success_message": str(payload.get("group_dm_success_message", "")).strip(),
+            "group_dm_failed_message": str(payload.get("group_dm_failed_message", "")).strip(),
+            "claim_prompt_message": str(payload.get("claim_prompt_message", "")).strip(),
+            "youtube_button_message": str(payload.get("youtube_button_message", "")).strip(),
+            "ask_code_message": str(payload.get("ask_code_message", "")).strip(),
+            "wrong_code_message": str(payload.get("wrong_code_message", "")).strip(),
+            "expired_code_message": str(payload.get("expired_code_message", "")).strip(),
+            "limit_message": str(payload.get("limit_message", "")).strip(),
+            "success_message": str(payload.get("success_message", "")).strip(),
+        }
+        if values["claim_expires_at"]:
+            values["claim_expires_at"] = values["claim_expires_at"].replace("T", " ")
+            if len(values["claim_expires_at"]) == 16:
+                values["claim_expires_at"] += ":00"
+            try:
+                datetime.strptime(values["claim_expires_at"], "%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                return self.send_json({"error": "口令有效期格式不正确"}, HTTPStatus.BAD_REQUEST)
+        if not values["claim_version"]:
+            values["claim_version"] = "口令-" + beijing_now().strftime("%Y%m%d%H%M%S")
+        with NodeDatabase(DATABASE) as database:
+            config = database.update_claim_config(values)
+        LOG_BUS.emit("claim", "领取口令配置已保存 | 当前版本 " + str(config.get("claim_version", "")), "success")
+        return self.send_json({"config": config})
 
     def subscription_expires_at(self, payload: dict) -> str:
         raw = str(payload.get("expires_at", "")).strip()

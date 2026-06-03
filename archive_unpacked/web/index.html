@@ -291,6 +291,71 @@
           </div>
           <div class="subscription-list" id="subscriptionList"></div>
         </article>
+        <article class="panel claim-code-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="panel-kicker">YOUTUBE CLAIM CODE</p>
+              <h2>领取口令配置</h2>
+              <p class="hint">用户在群组发送“我要节点”后，机器人私聊引导订阅 YouTube 频道，并要求输入最新免费节点领取视频中的口令。更换口令版本后，旧版本订阅链接会失效。</p>
+            </div>
+            <button class="ghost" id="refreshClaimConfig">刷新配置</button>
+          </div>
+          <div class="form-grid three">
+            <label>YouTube 频道链接
+              <small>按钮“去 YouTube 订阅”发送这个频道地址。</small>
+              <input id="claimYoutubeChannelUrl" placeholder="https://www.youtube.com/@your-channel">
+            </label>
+            <label>当前领取口令
+              <small>放在最新免费节点领取视频中的口令。</small>
+              <input id="claimCode" placeholder="例如：HUAGE0603">
+            </label>
+            <label>口令版本 / 期号
+              <small>每次换口令建议同步更新。若只改口令，系统会自动生成新版本。</small>
+              <input id="claimVersion" placeholder="例如：2026-06 第1期">
+            </label>
+            <label>口令有效期
+              <small>可留空。过期后即使口令正确也不发订阅链接。</small>
+              <input id="claimExpiresAt" type="datetime-local">
+            </label>
+            <label>每个 Telegram 用户每日领取次数
+              <small>超过次数后不再发放新订阅链接。</small>
+              <input id="claimDailyLimit" type="number" min="1" max="100" value="1">
+            </label>
+          </div>
+          <div class="form-grid two">
+            <label>群组私发成功提示
+              <textarea id="claimGroupDmSuccess"></textarea>
+            </label>
+            <label>群组私发失败提示
+              <textarea id="claimGroupDmFailed"></textarea>
+            </label>
+            <label>私聊领取卡片文案
+              <textarea id="claimPromptMessage"></textarea>
+            </label>
+            <label>去 YouTube 订阅提示
+              <textarea id="claimYoutubeButtonMessage"></textarea>
+            </label>
+            <label>请求输入口令提示
+              <textarea id="claimAskCodeMessage"></textarea>
+            </label>
+            <label>口令错误提示
+              <textarea id="claimWrongCodeMessage"></textarea>
+            </label>
+            <label>口令过期提示
+              <textarea id="claimExpiredCodeMessage"></textarea>
+            </label>
+            <label>每日次数超限提示
+              <textarea id="claimLimitMessage"></textarea>
+            </label>
+            <label>领取成功提示
+              <textarea id="claimSuccessMessage"></textarea>
+            </label>
+          </div>
+          <div class="notice-card" id="claimVersionNotice">当前口令版本尚未同步。</div>
+          <div class="actions">
+            <button class="primary" id="saveClaimConfig">保存领取口令配置</button>
+          </div>
+        </article>
       </section>
 
       <section class="page" id="botPage">
@@ -299,11 +364,11 @@
             <div>
               <p class="panel-kicker">TELEGRAM BOT</p>
               <h2>BOT 机器人控制台</h2>
-              <p class="hint">独立 Python 轮询进程。保存配置后启动 BOT，用户发送命中关键字时会立即收到可自定义的测试回复。</p>
+              <p class="hint">独立 Python 轮询进程。保存配置后启动 BOT，用户在群组发送命中关键字时进入领取口令流程。</p>
             </div>
             <span class="badge" id="botBadge">已停止</span>
           </div>
-          <div class="notice-card">当前启用本地简单回复模式：监测到关键字后立即回复测试信息，不使用公开验证地址，也不依赖 YouTube 验证。</div>
+          <div class="notice-card">当前启用领取口令流程：群组只做触发和提示，领取说明、口令验证和订阅链接发放都通过私聊完成。</div>
           <div class="auto-status-grid bot-status-grid">
             <div><span class="status-light" id="botStateLight"></span><strong id="botState">已停止</strong><small>BOT 当前运行状态</small></div>
             <div><span class="status-light" id="botAutoLight"></span><strong id="botAutoState">自动运行已关闭</strong><small>后台重启后是否自动恢复 BOT</small></div>
@@ -321,8 +386,8 @@
               <small>每行一个。用户发送完全匹配的文字后触发回复。</small>
               <textarea id="botKeywords" placeholder="节点&#10;订阅&#10;VMTOK"></textarea>
             </label>
-            <label>测试回复内容
-              <small>命中任意关键字后立即回复这段内容。</small>
+            <label>备用回复内容
+              <small>用于后续兜底场景。正式领取流程的文案请在“订阅链接 / 领取口令配置”中调整。</small>
               <textarea id="botReplyMessage">测试回复：BOT 已成功监测到关键字。</textarea>
             </label>
           </div>
