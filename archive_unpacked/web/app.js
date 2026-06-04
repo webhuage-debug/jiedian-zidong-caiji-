@@ -167,6 +167,7 @@ async function refreshStatus() {
 function applyBotConfig(config = {}) {
   $("botToken").value = config.bot_token || "";
   $("botUsername").value = config.bot_username || "";
+  $("botPublicBaseUrl").value = config.public_base_url || "";
   $("botAutoRun").checked = !!config.auto_run;
   $("botKeywords").value = config.keywords || "";
   $("botReplyMessage").value = config.reply_message || "";
@@ -176,6 +177,7 @@ function botPayload() {
   return {
     bot_token: $("botToken").value,
     bot_username: $("botUsername").value,
+    public_base_url: $("botPublicBaseUrl").value,
     auto_run: $("botAutoRun").checked,
     keywords: $("botKeywords").value,
     reply_message: $("botReplyMessage").value,

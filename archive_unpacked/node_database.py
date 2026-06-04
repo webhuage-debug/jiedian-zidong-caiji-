@@ -30,6 +30,19 @@ def asia_priority_sql(column: str = "country") -> str:
     return "CASE " + cases + " ELSE 999 END"
 
 
+def valid_quality_order_sql() -> str:
+    asia_bonus = (
+        "CASE WHEN " + " OR ".join(
+            "UPPER(country) LIKE '%" + country + "%'" for country in ASIA_COUNTRIES
+        ) + " THEN 2.0 ELSE 0 END"
+    )
+    stable_bonus = "CASE WHEN validation_count > 5 THEN 1.0 ELSE validation_count * 0.2 END"
+    return (
+        "(seconds - (" + asia_bonus + ") - (" + stable_bonus + ")) ASC, "
+        "seconds ASC, validation_count DESC, last_validated DESC, rowid DESC"
+    )
+
+
 class NodeDatabase:
     NODE_UPSERT = """
         INSERT INTO "节点库" (uri, protocol, repo, source, encoding, first_seen, last_seen)
@@ -804,8 +817,8 @@ class NodeDatabase:
             sql += " WHERE " + " AND ".join(clauses)
         sql += (
             "\n            ORDER BY "
-            + asia_priority_sql()
-            + ", seconds ASC, last_validated DESC, validation_count DESC, rowid DESC\n"
+            + valid_quality_order_sql()
+            + "\n"
             "            LIMIT ? OFFSET ?\n"
         )
         params.extend([limit, offset])
@@ -831,7 +844,7 @@ class NodeDatabase:
             """
             SELECT uri, protocol, proxy_ips, seconds, last_validated, validation_count, country
             FROM "有效节点"
-            ORDER BY """ + asia_priority_sql() + """, seconds ASC, last_validated DESC, validation_count DESC, rowid DESC
+            ORDER BY """ + valid_quality_order_sql() + """
             """
         )
         return [
@@ -1209,6 +1222,30 @@ class NodeDatabase:
             }
             for row in rows
         ]
+
+    def prune_bot_message_logs(self, retention_days: int = 30, max_rows: int = 5000) -> Dict[str, int]:
+        retention_days = max(1, int(retention_days))
+        max_rows = max(1, int(max_rows))
+        cursor = self.connection.execute(
+            'DELETE FROM "Bot消息日志" WHERE created_at < datetime("now", "+8 hours", ?)',
+            ("-" + str(retention_days) + " days",),
+        )
+        removed_by_age = cursor.rowcount
+        cursor = self.connection.execute(
+            """
+            DELETE FROM "Bot消息日志"
+            WHERE id NOT IN (
+                SELECT id FROM "Bot消息日志" ORDER BY id DESC LIMIT ?
+            )
+            """,
+            (max_rows,),
+        )
+        removed_by_count = cursor.rowcount
+        self.connection.commit()
+        return {"age": removed_by_age, "count": removed_by_count}
+
+    def checkpoint(self) -> None:
+        self.connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
 
     def close(self) -> None:
         self.connection.close()

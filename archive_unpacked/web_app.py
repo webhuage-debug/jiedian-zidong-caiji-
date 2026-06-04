@@ -191,6 +191,50 @@ def ensure_bot_auto_run() -> bool:
     return changed
 
 
+MAINTENANCE_THREAD: Optional[threading.Thread] = None
+
+
+def run_maintenance(emit_result: bool = True) -> None:
+    try:
+        with NodeDatabase(DATABASE) as database:
+            removed_sessions = database.prune_admin_sessions()
+            removed_bot_logs = database.prune_bot_message_logs(
+                CONFIG.bot_message_log_retention_days,
+                CONFIG.bot_message_log_max_rows,
+            )
+            database.checkpoint()
+    except Exception as exc:
+        LOG_BUS.emit("maintenance", "自动清理失败 | " + str(exc), "warning")
+        return
+    removed_total = removed_sessions + removed_bot_logs["age"] + removed_bot_logs["count"]
+    if emit_result and removed_total:
+        LOG_BUS.emit(
+            "maintenance",
+            "自动清理完成 | 过期会话 "
+            + str(removed_sessions)
+            + " | Bot日志按时间 "
+            + str(removed_bot_logs["age"])
+            + " | Bot日志按数量 "
+            + str(removed_bot_logs["count"]),
+            "success",
+        )
+
+
+def start_maintenance_worker() -> None:
+    global MAINTENANCE_THREAD
+    if MAINTENANCE_THREAD and MAINTENANCE_THREAD.is_alive():
+        return
+
+    def loop() -> None:
+        interval = max(1, CONFIG.maintenance_interval_hours) * 3600
+        while True:
+            time.sleep(interval)
+            run_maintenance()
+
+    MAINTENANCE_THREAD = threading.Thread(target=loop, name="maintenance", daemon=True)
+    MAINTENANCE_THREAD.start()
+
+
 def task_is_running(name: str) -> bool:
     return bool(TASKS[name].status()["running"])
 
@@ -560,13 +604,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if route == "/api/subscription/base64":
             with NodeDatabase(DATABASE) as database:
                 config = database.processing_config()
-                nodes = database.all_valid_nodes()
+                nodes = database.valid_nodes(CONFIG.subscription_node_limit, 0)
             result = subscription_base64(nodes, config["rename_template"])
             return self.send_text(result["subscription"] + "\n", "text/plain; charset=utf-8")
         if route == "/api/subscription/plain":
             with NodeDatabase(DATABASE) as database:
                 config = database.processing_config()
-                nodes = database.all_valid_nodes()
+                nodes = database.valid_nodes(CONFIG.subscription_node_limit, 0)
             rows = processed_nodes(nodes, config["rename_template"])
             return self.send_text("\n".join(row["uri"] for row in rows) + "\n", "text/plain; charset=utf-8")
         if route == "/api/events":
@@ -643,7 +687,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             with NodeDatabase(DATABASE) as database:
                 if not template:
                     template = database.processing_config()["rename_template"]
-                nodes = database.all_valid_nodes()
+                nodes = database.valid_nodes(CONFIG.subscription_node_limit, 0)
             result = subscription_base64(nodes, template)
             LOG_BUS.emit("processor", "已生成 Base64 订阅，节点数 " + str(result["count"]), "success")
             return self.send_json({"template": template, **result})
@@ -719,7 +763,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 return self.convert_subscription(token, target, str(link["name"]))
             config = database.processing_config()
             template = link["rename_template"] or config["rename_template"]
-            nodes = database.all_valid_nodes()
+            nodes = database.valid_nodes(CONFIG.subscription_node_limit, 0)
             result = subscription_base64(nodes, template)
             database.touch_subscription_link(token, self.client_ip())
         LOG_BUS.emit("subscription", "订阅已访问 | " + str(link["name"]) + " | 格式 " + (target or "v2ray") + " | 节点 " + str(result["count"]), "info")
@@ -1098,6 +1142,8 @@ class DashboardServer(ThreadingHTTPServer):
 def main() -> int:
     with NodeDatabase(DATABASE) as database:
         ensure_default_admin(database)
+    run_maintenance()
+    start_maintenance_worker()
     AUTO_CONTROLLER.ensure_running()
     ensure_bot_auto_run()
     host = CONFIG.host

@@ -38,6 +38,10 @@ class AppConfig:
     runtime_log_max_bytes: int
     log_buffer_size: int
     task_stop_timeout: int
+    bot_message_log_retention_days: int
+    bot_message_log_max_rows: int
+    maintenance_interval_hours: int
+    subscription_node_limit: int
 
     @classmethod
     def from_env(cls) -> "AppConfig":
@@ -55,6 +59,10 @@ class AppConfig:
             runtime_log_max_bytes=env_int("HUAGE_RUNTIME_LOG_MAX_BYTES", 10 * 1024 * 1024, 1024 * 1024, 1024 * 1024 * 1024),
             log_buffer_size=env_int("HUAGE_LOG_BUFFER_SIZE", 1200, 100, 100000),
             task_stop_timeout=env_int("HUAGE_TASK_STOP_TIMEOUT", 3, 1, 120),
+            bot_message_log_retention_days=env_int("HUAGE_BOT_MESSAGE_LOG_RETENTION_DAYS", 30, 1, 3650),
+            bot_message_log_max_rows=env_int("HUAGE_BOT_MESSAGE_LOG_MAX_ROWS", 5000, 100, 1000000),
+            maintenance_interval_hours=env_int("HUAGE_MAINTENANCE_INTERVAL_HOURS", 6, 1, 168),
+            subscription_node_limit=env_int("HUAGE_SUBSCRIPTION_NODE_LIMIT", 100, 1, 10000),
         )
 
 

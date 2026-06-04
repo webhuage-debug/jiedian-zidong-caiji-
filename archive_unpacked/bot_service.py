@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, Iterable, Optional
 
+from app_config import CONFIG
 from app_time import beijing_now
 from node_database import NodeDatabase
 
@@ -212,7 +213,9 @@ class TelegramBot:
         if not public_base_url:
             with NodeDatabase(self.database) as database:
                 bot_config = database.bot_config()
-            public_base_url = str(bot_config.get("public_base_url") or "http://127.0.0.1:8766").strip()
+            public_base_url = str(
+                bot_config.get("public_base_url") or "http://" + CONFIG.host + ":" + str(CONFIG.port)
+            ).strip()
         subscription_url = public_base_url.rstrip("/") + "/sub/" + str(link["token"])
         reply = str(claim_config["success_message"]).strip() + "\n\n请选择你的代理软件格式："
         keyboard = {

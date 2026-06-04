@@ -51,6 +51,12 @@ def first(query: Dict[str, list], key: str, default: str = "") -> str:
     return query.get(key, [default])[0]
 
 
+def curl_base_command() -> list:
+    if os.name == "nt":
+        return ["curl.exe", "--ssl-no-revoke", "-k"]
+    return ["curl"]
+
+
 def stream_settings(query: Dict[str, list]) -> dict:
     network = first(query, "type", first(query, "net", "tcp"))
     security = first(query, "security")
@@ -60,7 +66,6 @@ def stream_settings(query: Dict[str, list]) -> dict:
         target = {
             "serverName": first(query, "sni"),
             "fingerprint": first(query, "fp"),
-            "allowInsecure": first(query, "allowInsecure") in ("1", "true"),
         }
         if security == "reality":
             target.update({
@@ -164,8 +169,8 @@ def config_for(node: str, port: int) -> dict:
 
 def curl_trace_ip(timeout: int) -> str:
     result = subprocess.run(
-        [
-            "curl", "-sS", "-L", "--noproxy", "*",
+        curl_base_command() + [
+            "-sS", "-L", "--noproxy", "*",
             "--connect-timeout", str(timeout), "--max-time", str(timeout),
             "https://www.cloudflare.com/cdn-cgi/trace",
         ],
@@ -179,10 +184,23 @@ def curl_trace_ip(timeout: int) -> str:
     raise RuntimeError("本机直连 Cloudflare trace 未返回出口 IP")
 
 
+def default_probe_urls() -> list:
+    if os.name == "nt":
+        return [
+            "http://www.gstatic.com/generate_204",
+            "http://ip-api.com/line/?fields=query",
+        ]
+    return [
+        "https://www.google.com/generate_204",
+        "https://www.cloudflare.com/cdn-cgi/trace",
+        "https://speed.cloudflare.com/__down?bytes=32768",
+    ]
+
+
 def run_probe(port: int, probe_url: str, timeout: int) -> Tuple[bool, str, Optional[str]]:
     probe = subprocess.run(
-        [
-            "curl", "-sS", "-L",
+        curl_base_command() + [
+            "-sS", "-L",
             "--noproxy", "",
             "--proxy", "socks5h://127.0.0.1:" + str(port),
             "--connect-timeout", str(timeout), "--max-time", str(timeout),
@@ -208,6 +226,12 @@ def run_probe(port: int, probe_url: str, timeout: int) -> Tuple[bool, str, Optio
             if line.startswith(b"ip="):
                 trace_ip = line[3:].decode("ascii", errors="replace").strip()
                 break
+    if "ip-api.com/line" in probe_url:
+        candidate = body.decode("ascii", errors="ignore").strip().splitlines()[0] if body.strip() else ""
+        if re.match(r"^\d{1,3}(?:\.\d{1,3}){3}$", candidate):
+            trace_ip = candidate
+        else:
+            return False, "ip-api 未返回代理出口 IP", None
     return True, "HTTP " + status, trace_ip
 
 
@@ -297,11 +321,7 @@ def main() -> int:
     args = parse_args()
     if args.workers <= 0 or args.max_batch <= 0 or args.rounds <= 0 or args.round_delay < 0:
         raise SystemExit("--workers, --max-batch and --rounds must be positive; --round-delay must not be negative")
-    probe_urls = args.probe_url or [
-        "https://www.google.com/generate_204",
-        "https://www.cloudflare.com/cdn-cgi/trace",
-        "https://speed.cloudflare.com/__down?bytes=32768",
-    ]
+    probe_urls = args.probe_url or default_probe_urls()
     try:
         direct_ip = curl_trace_ip(args.timeout)
         safe_print("本机直连出口 IP: " + direct_ip)
