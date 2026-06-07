@@ -3,8 +3,6 @@ services:
     build: .
     container_name: huage-web
     restart: unless-stopped
-    env_file:
-      - .env
     environment:
       HUAGE_HOST: 0.0.0.0
       HUAGE_PORT: 8765
