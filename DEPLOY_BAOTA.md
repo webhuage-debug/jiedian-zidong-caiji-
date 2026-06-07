@@ -1,71 +1,127 @@
 # 宝塔面板部署说明
 
-## 目录与访问地址
+本文用于把项目部署到海外 VPS，并通过宝塔/Nginx 做反向代理。
 
-- 项目目录：`/www/wwwroot/node.huage.us`
-- 后台监听：`127.0.0.1:8765`
-- 后台地址：`https://node.huage.us/adminhuage`
+## 固定端口
+
+- Web 后台：`127.0.0.1:8765`
+- Sub-Store sidecar：`127.0.0.1:3001`
+- 后台路径：`/adminhuage`
 - 健康检查：`http://127.0.0.1:8765/healthz`
 
-服务默认只监听本机回环地址，不需要将 `8765` 端口暴露到公网。
+不要把 `8765` 和 `3001` 直接暴露到公网，公网只通过宝塔/Nginx 反代访问后台域名。
 
-## VPS 基础准备
-
-在宝塔终端中执行：
+## 1. 拉取代码
 
 ```bash
+cd /www/wwwroot
+git clone -b codex/v1.0.0-release https://github.com/webhuage-debug/jiedian-zidong-caiji-.git node.huage.us
 cd /www/wwwroot/node.huage.us
-python3 --version
-uname -m
-curl --version
 ```
 
-建议使用 Python 3.11 或更高版本。节点验证依赖系统命令 `curl`。
-
-上传包不包含本地 macOS Xray 内核。请根据 `uname -m` 输出下载 Linux 版本：
+如果要固定到 1.0.0 标签：
 
 ```bash
-cd /www/wwwroot/node.huage.us/tools/xray
-rm -f xray
+git checkout v1.0.0
+```
 
-# x86_64 VPS
+## 2. 准备 Python 环境
+
+建议 Python 3.11 或更高版本。
+
+```bash
+python3 --version
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+## 3. 下载 Xray Linux 内核
+
+发布仓库不内置 Xray 二进制和 geo 数据文件，需要在 VPS 上按架构下载。
+
+```bash
+mkdir -p tools/xray
+cd tools/xray
+rm -f xray geoip.dat geosite.dat
+```
+
+x86_64 VPS：
+
+```bash
 curl -L -o /tmp/xray.zip https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip
+```
 
-# ARM64 VPS 使用下面这一行替换上一行
-# curl -L -o /tmp/xray.zip https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-arm64-v8a.zip
+ARM64 VPS：
 
+```bash
+curl -L -o /tmp/xray.zip https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-arm64-v8a.zip
+```
+
+解压并验证：
+
+```bash
 unzip -o /tmp/xray.zip xray geoip.dat geosite.dat -d .
 chmod +x xray
 ./xray version
-
 cd /www/wwwroot/node.huage.us
-chown -R www:www .
 ```
 
-## 添加 Python 项目
+## 4. 启动 Sub-Store
 
-在宝塔 Python 项目管理器中填写：
+推荐 Docker 部署时使用 `docker-compose.yml` 里的 `sub-store` sidecar。
+
+如果你用宝塔 Python 项目方式部署主程序，也需要单独运行 Sub-Store。可以二选一：
+
+### 方式 A：用 Docker 单独跑 Sub-Store
+
+```bash
+docker run -d \
+  --name huage-sub-store \
+  --restart unless-stopped \
+  -p 127.0.0.1:3001:3001 \
+  -v /www/wwwroot/node.huage.us/data/sub-store:/opt/app/data \
+  xream/sub-store:latest
+```
+
+### 方式 B：用 docker compose 跑整套服务
+
+```bash
+cd /www/wwwroot/node.huage.us
+docker compose up -d
+```
+
+Docker Compose 会启动：
+
+- `huage-web`：Web 后台，端口 `8765`
+- `huage-sub-store`：订阅转换 sidecar，端口 `3001`
+
+## 5. 宝塔 Python 项目配置
+
+如果不用 Docker 跑 Web，而是使用宝塔 Python 项目管理器：
 
 | 项目 | 填写内容 |
 | --- | --- |
 | 项目名称 | `Huage-Free` |
-| Python 环境 | 选择 Python 3.11 或更高版本 |
-| 启动方式 | `命令行启动` |
 | 项目路径 | `/www/wwwroot/node.huage.us` |
-| 启动命令 | `web_app.py` |
-| 环境变量 | `无` |
+| 启动文件 | `web_app.py` |
+| Python 环境 | `.venv` 或宝塔创建的 Python 3.11+ 环境 |
 | 启动用户 | `www` |
-| 安装依赖包 | `/www/wwwroot/node.huage.us/requirements.txt` |
 
-默认配置已经满足宝塔反代：
+环境变量建议：
 
-- `HUAGE_HOST=127.0.0.1`
-- `HUAGE_PORT=8765`
-- `HUAGE_ADMIN_BASE_PATH=/adminhuage`
+```text
+HUAGE_HOST=127.0.0.1
+HUAGE_PORT=8765
+HUAGE_ADMIN_BASE_PATH=/adminhuage
+HUAGE_DATABASE=/www/wwwroot/node.huage.us/data/nodes.db
+HUAGE_LOG_DIR=/www/wwwroot/node.huage.us/data/logs
+HUAGE_SUB_STORE_URL=http://127.0.0.1:3001
+```
 
-## 反向代理
+## 6. 宝塔反向代理
 
-在宝塔网站 `node.huage.us` 中添加反向代理：
+在宝塔网站中添加反向代理：
 
 ```text
 代理名称：node-dashboard
@@ -73,7 +129,7 @@ chown -R www:www .
 发送域名：$host
 ```
 
-实时日志使用 SSE。若日志流无法持续刷新，在 Nginx 反代配置中补充：
+Nginx 反代建议补充：
 
 ```nginx
 proxy_http_version 1.1;
@@ -84,42 +140,45 @@ proxy_buffering off;
 proxy_read_timeout 3600s;
 ```
 
-## 启动后检查
-
-在 VPS 终端中执行：
+## 7. 启动后检查
 
 ```bash
 curl http://127.0.0.1:8765/healthz
+curl http://127.0.0.1:3001
 ```
 
-正常结果类似：
-
-```json
-{"ok":true,"tasks":{"collector":false,"validator":false,"bot":false}}
-```
-
-然后访问：
+后台地址：
 
 ```text
-https://node.huage.us/adminhuage
+https://你的域名/adminhuage
 ```
 
-首次登录账号：
+默认后台账号：
 
 ```text
 admin
 admin888
 ```
 
-登录后立即修改密码。
+首次登录后请立即修改密码，并在后台检查：
 
-## BOT 自动运行
+- Xray 当前版本是否可识别
+- Sub-Store 健康检查是否通过
+- 订阅转换是否能返回内容
+- 总控是否按预期开启
+- 系统维护清理策略是否启用
 
-BOT 是否随后台恢复运行由数据库中的开关决定：
+## 8. 数据和日志
 
-1. 进入后台 `BOT 机器人` 页面。
-2. 填写 Telegram Bot Token。
-3. 开启 `自动运行 BOT`。
-4. 点击 `保存 BOT 配置`。
+以下目录是运行数据，不要提交到 Git：
 
-后台服务下次重启时会读取数据库配置并自动恢复 BOT。
+- `data/nodes.db`
+- `data/logs/`
+- `data/reports/`
+- `data/sub-store/`
+
+正式运行前建议备份：
+
+```bash
+tar -czf huage-data-backup-$(date +%F).tar.gz data
+```
