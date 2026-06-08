@@ -1,0 +1,27 @@
+services:
+  huage-web:
+    build: .
+    container_name: huage-web
+    restart: unless-stopped
+    environment:
+      HUAGE_HOST: 0.0.0.0
+      HUAGE_PORT: 8765
+      HUAGE_DATABASE: /app/data/nodes.db
+      HUAGE_LOG_DIR: /app/data/logs
+      HUAGE_SUB_STORE_URL: ${HUAGE_SUB_STORE_URL:-http://sub-store:3001}
+    ports:
+      - "8765:8765"
+    volumes:
+      - ./data:/app/data
+      - ./tools:/app/tools
+    depends_on:
+      - sub-store
+
+  sub-store:
+    image: ${SUB_STORE_IMAGE:-xream/sub-store:latest}
+    container_name: huage-sub-store
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./data/sub-store:/opt/app/data

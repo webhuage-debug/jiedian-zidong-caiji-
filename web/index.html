@@ -1,0 +1,865 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>节点控制台</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23000'/%3E%3Cpath d='M18 34h28M18 24h28M18 44h18' stroke='%233dd6b5' stroke-width='6' stroke-linecap='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/adminhuage/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <p class="eyebrow">本地节点运维</p>
+      <h1 id="pageTitle">节点控制台</h1>
+      <p class="subtitle" id="pageSubtitle">采集、验证、订阅导出与自动闭环集中在后台面板中。</p>
+    </div>
+    <div class="top-actions">
+      <div class="connection"><span class="dot" id="connectionDot"></span><span id="connectionText">正在连接</span></div>
+      <button class="ghost" id="accountButton">账号设置</button>
+      <button class="danger" id="logoutButton">退出登录</button>
+    </div>
+  </header>
+
+  <dialog id="accountDialog">
+    <form method="dialog" class="account-card">
+      <div class="panel-heading">
+        <div><p class="panel-kicker">账号设置</p><h2>后台账号设置</h2></div>
+        <button class="ghost" id="closeAccount" type="button">关闭</button>
+      </div>
+      <label>用户名<input id="accountUsername" autocomplete="username"></label>
+      <label>新密码
+        <small>留空则不修改密码。建议至少 8 位。</small>
+        <input id="accountPassword" type="password" autocomplete="new-password" placeholder="不修改请留空">
+      </label>
+      <div class="actions">
+        <button class="primary" id="saveAccount" type="button">保存账号</button>
+      </div>
+    </form>
+  </dialog>
+
+  <main>
+    <section class="auto-console panel dashboard-only" aria-label="全自动控制台">
+      <div class="panel-heading">
+        <div>
+          <p class="panel-kicker">自动总控</p>
+          <h2>全自动控制台</h2>
+          <p class="hint">统一调度采集与验证：节点库有待验证库存时优先验证，只有节点库为空才采集。采集运行时禁止验证，验证运行时禁止采集。</p>
+        </div>
+        <span class="badge" id="autoBadge">已关闭</span>
+      </div>
+      <div class="auto-status-grid">
+        <div><span class="status-light" id="autoLight"></span><strong id="autoPhase">空闲</strong><small>自动控制状态</small></div>
+        <div><span class="status-light" id="autoCollectorLight"></span><strong id="autoCollectorState">采集已停止</strong><small>采集状态指示灯</small></div>
+        <div><span class="status-light" id="autoValidatorLight"></span><strong id="autoValidatorState">验证已停止</strong><small>验证状态指示灯</small></div>
+        <div><strong id="autoReason">等待状态同步</strong><small>下一步动作 / 最近触发原因</small></div>
+        <div><strong id="controlMode">空闲</strong><small>总控模式</small></div>
+        <div><strong id="controlIntent">无</strong><small>总控意图</small></div>
+        <div><strong id="controlDecision">等待</strong><small>最近决策</small></div>
+      </div>
+      <div class="notice-card" id="autoNotice">自动控制未开启。开启后会按分钟巡检有效节点库，低于阈值时优先验证库存，库存为空才采集补货。</div>
+      <div class="auto-progress-grid">
+        <div><span>当前有效节点</span><strong id="autoValidCount">0</strong></div>
+        <div><span>有效节点最低阈值</span><strong id="autoLowWatermarkView">0</strong></div>
+        <div><span>节点库待验证</span><strong id="autoPendingCount">0</strong></div>
+        <div><span>本轮采集新增</span><strong id="autoCollectProgress">0 / 0</strong></div>
+        <div><span>本轮验证新增有效</span><strong id="autoValidateProgress">0 / 0</strong></div>
+      </div>
+      <details class="auto-params" open>
+        <summary>自动控制参数区（点击可收起）</summary>
+        <h3>巡检策略</h3>
+        <div class="form-grid three">
+          <label>有效节点最低阈值
+            <small>当有效节点数量低于这个值时，先验证节点库库存；只有节点库为空才会启动采集。</small>
+            <input id="autoValidLow" type="number" min="0" value="1000">
+          </label>
+          <label>有效节点库巡检间隔（分钟）
+            <small>后台每隔多少分钟检查一次有效节点数量和任务状态。7x24 推荐 5-30 分钟。</small>
+            <input id="autoCheckIntervalMinutes" type="number" min="1" max="1440" value="5">
+          </label>
+          <label>验证新增有效目标
+            <small>本轮验证新增有效节点达到或超过这个值后，停止验证并结束本轮任务。</small>
+            <input id="autoValidateTarget" type="number" min="1" value="200">
+          </label>
+        </div>
+        <h3>采集补货策略</h3>
+        <div class="form-grid three">
+          <label>采集新增入库目标
+            <small>仅在节点库为空时生效。本轮采集新增节点达到或超过这个值后，停止采集并进入验证。</small>
+            <input id="autoCollectTarget" type="number" min="1" value="20000">
+          </label>
+          <label>自动采集并发数
+            <small>并发越高越快，也越容易触发源站限制。</small>
+            <input id="autoCollectorWorkers" type="number" min="1" max="12" value="5">
+          </label>
+          <label>自动采集目录深度
+            <small>用于处理二级、三级目录，深度越大扫描越完整。</small>
+            <input id="autoCollectorDepth" type="number" min="0" max="20" value="8">
+          </label>
+          <label>自动采集请求延迟（秒）
+            <small>每次请求之间的基础等待时间，用来降低被阻拦概率。</small>
+            <input id="autoCollectorDelay" type="number" min="0" step="0.1" value="1">
+          </label>
+        </div>
+        <div class="form-grid three">
+          <label>自动采集随机抖动（秒）
+            <small>在基础延迟外增加随机等待，让请求节奏更自然。</small>
+            <input id="autoCollectorJitter" type="number" min="0" step="0.1" value="0.5">
+          </label>
+          <label>自动采集日志级别
+            <small>详细级别适合排查，逐节点会产生大量日志。</small>
+            <select id="autoCollectorLogLevel"><option value="compact">精简</option><option value="detail">详细</option><option value="nodes">逐节点</option></select>
+          </label>
+        </div>
+        <h3>验证策略</h3>
+        <div class="form-grid three">
+          <label>自动验证线程数
+            <small>同时验证多少个节点。建议 10 左右，过高会占用较多端口和 CPU。</small>
+            <input id="autoValidatorWorkers" type="number" min="1" max="50" value="20">
+          </label>
+          <label>验证检查轮数
+            <small>每个节点连续通过多少轮探测才判定为有效。</small>
+            <input id="autoValidatorRounds" type="number" min="1" max="10" value="1">
+          </label>
+          <label>验证超时（秒）
+            <small>单次探测超过这个时间仍无响应，则认为本轮失败。</small>
+            <input id="autoValidatorTimeout" type="number" min="2" max="60" value="5">
+          </label>
+        </div>
+        <label class="checkbox"><input id="autoRecheckEnabled" type="checkbox"> 定时复检有效节点
+          <small>开启后会按间隔复检有效节点；复检失败的节点会从有效节点库剔除。</small>
+        </label>
+        <div class="form-grid three">
+          <label>复检间隔（分钟）
+            <small>建议 360 分钟起，避免 7x24 运行时过度消耗端口和 CPU。</small>
+            <input id="autoRecheckIntervalMinutes" type="number" min="5" max="1440" value="360">
+          </label>
+          <label>每批复检数量
+            <small>复检有效节点时优先亚洲候选，数量不足自动回退全球候选。</small>
+            <input id="autoRecheckLimit" type="number" min="1" max="1000" value="50">
+          </label>
+        </div>
+        <p class="hint">自动验证不需要手动填写验证数量。只要节点库还有待验证库存，后台会根据“验证新增有效目标”自动分批抽取节点；新增有效节点达到或超过目标后停止。节点库为 0 时才会进入采集补货。</p>
+      </details>
+      <div class="actions">
+        <button class="primary" id="startAuto">开启自动控制</button>
+        <button class="ghost" id="saveAutoConfig">保存参数</button>
+        <button class="danger" id="stopAuto">关闭自动控制并停止任务</button>
+      </div>
+    </section>
+
+    <section class="panel cockpit-panel dashboard-only" aria-label="系统驾驶舱">
+      <div class="panel-heading">
+        <div>
+          <p class="panel-kicker">系统驾驶舱</p>
+          <h2>运行健康度</h2>
+          <p class="hint" id="cockpitSummary">正在读取系统状态。</p>
+        </div>
+        <span class="badge" id="cockpitBadge">待同步</span>
+      </div>
+      <div class="cockpit-gauges">
+        <article class="cockpit-gauge secondary" id="validGaugeCard">
+          <span>有效库存</span>
+          <div class="gauge-meter" id="validGauge"><div class="gauge-ticks"></div><div class="gauge-needle"></div></div>
+          <strong id="validNodes">0</strong>
+          <b class="gauge-state" id="validGaugeState">待同步</b>
+          <small id="validGaugeLabel">目标 1000</small>
+        </article>
+        <article class="cockpit-gauge primary" id="healthGaugeCard">
+          <span>系统健康度</span>
+          <div class="gauge-meter large" id="healthGauge"><div class="gauge-ticks"></div><div class="gauge-needle"></div></div>
+          <strong id="healthScore">0</strong>
+          <b class="gauge-state" id="healthGaugeState">待同步</b>
+          <small id="healthGaugeLabel">等待数据</small>
+        </article>
+        <article class="cockpit-gauge secondary" id="pendingGaugeCard">
+          <span>验证压力</span>
+          <div class="gauge-meter" id="pendingGauge"><div class="gauge-ticks"></div><div class="gauge-needle"></div></div>
+          <strong id="pendingNodes">0</strong>
+          <b class="gauge-state" id="pendingGaugeState">待同步</b>
+          <small id="pendingGaugeLabel">等待验证</small>
+        </article>
+      </div>
+      <div class="cockpit-strip">
+        <article><span>节点总数</span><strong id="totalNodes">0</strong></article>
+        <article><span>无效节点</span><strong id="invalidNodes">0</strong><small id="invalidGaugeLabel">占比 0%</small></article>
+        <article><span>重复过滤</span><strong id="duplicateNodes">0</strong></article>
+        <article><span>建议动作</span><strong id="cockpitAction">等待判断</strong></article>
+      </div>
+    </section>
+    <section class="flow-status dashboard-only" aria-label="节点流转状态">
+      <span id="nodeFlowStatus">验证会把节点从“未验证”流转到“有效/无效”，节点总数只在采集入库时变化。</span>
+    </section>
+
+    <section class="panel ops-trend-panel dashboard-only" aria-label="&#36817; 7 &#22825;&#36816;&#34892;&#36235;&#21183;">
+      <div class="panel-heading">
+        <div>
+          <p class="panel-kicker">&#36816;&#34892;&#32479;&#35745;</p>
+          <h2>&#36817; 7 &#22825;&#36816;&#34892;&#36235;&#21183;</h2>
+          <p class="hint">&#26469;&#33258;&#38271;&#26399;&#32479;&#35745;&#34920;&#65292;&#19981;&#25195;&#25551;&#21407;&#22987;&#26085;&#24535;&#12290;</p>
+        </div>
+        <button class="ghost" id="refreshOpsStats">&#21047;&#26032;&#22270;&#34920;</button>
+      </div>
+      <div class="trend-summary" id="opsTrendSummary"></div>
+      <div class="trend-chart" id="opsTrendChart"></div>
+    </section>
+
+    <section class="pipeline-map dashboard-only" aria-label="运行链路图">
+      <article class="pipeline-step" id="stageCollect"><span>采集源</span><strong>等待状态</strong></article>
+      <article class="pipeline-step" id="stagePool"><span>节点池</span><strong>等待状态</strong></article>
+      <article class="pipeline-step" id="stageValidate"><span>连通验证</span><strong>等待状态</strong></article>
+      <article class="pipeline-step" id="stageValid"><span>有效节点池</span><strong>等待状态</strong></article>
+      <article class="pipeline-step" id="stageClaim"><span>领取口令</span><strong>等待状态</strong></article>
+      <article class="pipeline-step" id="stageBot"><span>机器人分发</span><strong>等待状态</strong></article>
+      <article class="pipeline-step" id="stageConvert"><span>订阅转换</span><strong>未检查</strong></article>
+      <article class="pipeline-step" id="stageAcceptance"><span>真实验收</span><strong>待命</strong></article>
+      <article class="pipeline-step" id="stageMaintenance"><span>系统维护</span><strong>等待状态</strong></article>
+    </section>
+
+    <section class="panel dashboard-log-panel dashboard-only" id="dashboardPage">
+      <div class="panel-heading">
+        <div><p class="panel-kicker">总日志</p><h2>总控运行日志</h2></div>
+        <button class="ghost" id="clearLogs">清空显示</button>
+      </div>
+      <div class="log-tabs" role="tablist">
+        <button class="tab active" data-log-source="all">全部</button>
+        <button class="tab" data-log-source="auto">自动</button>
+        <button class="tab" data-log-source="collector">采集</button>
+        <button class="tab" data-log-source="validator">验证</button>
+        <button class="tab" data-log-source="processor">处理</button>
+        <button class="tab" data-log-source="claim">领取</button>
+        <button class="tab" data-log-source="bot">机器人</button>
+      </div>
+      <pre id="logs" aria-live="polite"></pre>
+    </section>
+
+    <nav class="page-tabs ops-tabs" aria-label="功能页面">
+      <div class="sidebar-brand">
+        <strong>节点控制台</strong>
+        <span>7x24 自动化运维</span>
+      </div>
+      <button class="page-tab active" id="navDashboard" data-dashboard="1">总控仪表盘</button>
+      <button class="page-tab" id="navCollect" data-pages="collectPage reposPage">采集</button>
+      <button class="page-tab" id="navValidate" data-pages="validatePage">验证</button>
+      <button class="page-tab" id="navNodes" data-pages="nodesPage processingPage">节点池</button>
+      <button class="page-tab" id="navSubscription" data-pages="subscriptionPage converterPage">订阅</button>
+      <button class="page-tab" id="navBot" data-pages="claimCodePage botPage">口令/BOT</button>
+      <button class="page-tab" id="navSettings" data-pages="acceptancePage maintenancePage">设置</button>
+      <div class="sidebar-foot">
+        <span>Web 端口 8765</span>
+        <span>Sub-Store 3001</span>
+      </div>
+    </nav>
+
+    <section class="pages">
+      <section class="page" id="collectPage">
+        <article class="panel control-panel">
+          <div class="panel-heading">
+            <div><p class="panel-kicker">采集任务</p><h2>节点采集</h2></div>
+            <span class="badge" id="collectorBadge">已停止</span>
+          </div>
+          <div class="form-grid five">
+            <label>采集并发数<input id="collectorWorkers" type="number" min="1" max="12" value="5"></label>
+            <label>目录深度<input id="collectorDepth" type="number" min="0" max="20" value="8"></label>
+            <label>请求延迟（秒）<input id="collectorDelay" type="number" min="0" step="0.1" value="1"></label>
+            <label>随机抖动（秒）<input id="collectorJitter" type="number" min="0" step="0.1" value="0.5"></label>
+            <label>日志级别<select id="collectorLogLevel"><option value="compact">精简</option><option value="detail" selected>详细</option><option value="nodes">逐节点</option></select></label>
+          </div>
+          <div class="actions">
+            <button class="primary" id="startCollector">启动采集</button>
+            <button class="danger" id="stopCollector">马上停止</button>
+            <button class="ghost" id="clearPendingNodes">清空未验证节点</button>
+            <button class="ghost danger-lite" id="clearValidNodes">清空有效节点</button>
+          </div>
+          <div class="module-meter-grid" aria-label="采集运行统计">
+            <article><span>采集状态</span><strong id="collectMetricState">已停止</strong><small id="collectMetricReason">等待采集指令</small></article>
+            <article><span>节点池总量</span><strong id="collectMetricAll">0</strong><small id="collectMetricDelta">本轮变化 0</small></article>
+            <article><span>新增入库</span><strong id="collectMetricInserted">0</strong><small id="collectMetricDuplicate">重复 0</small></article>
+            <article><span>采集效率</span><strong id="collectMetricRate">0/分</strong><small id="collectMetricRequests">请求 0 / 失败 0</small></article>
+          </div>
+          <div class="module-flow compact-flow" aria-label="采集流水线">
+            <span id="collectStepScan">仓库扫描</span>
+            <span id="collectStepParse">内容解析</span>
+            <span id="collectStepFilter">去重过滤</span>
+            <span id="collectStepStore">入库完成</span>
+          </div>
+          <div class="collector-progress">
+            <div><span>当前仓库</span><strong id="collectorRepo">-</strong></div>
+            <div class="wide"><span>当前地址</span><strong id="collectorUrl">-</strong></div>
+            <div><span>活动请求</span><strong id="collectorActive">0</strong></div>
+            <div><span>目录页</span><strong id="collectorPages">0</strong></div>
+            <div><span>候选文件</span><strong id="collectorCandidates">0</strong></div>
+            <div><span>已抓文件</span><strong id="collectorFetched">0</strong></div>
+            <div><span>无节点文件</span><strong id="collectorNoNodeFiles">0</strong></div>
+            <div><span>失败请求</span><strong id="collectorFailed">0</strong></div>
+            <div><span>解析节点</span><strong id="collectorParsed">0</strong></div>
+            <div><span>新增入库</span><strong id="collectorInserted">0</strong></div>
+            <div><span>本轮重复</span><strong id="collectorDuplicates">0</strong></div>
+          </div>
+          <pre class="module-log" id="collectLogs">暂无采集日志。</pre>
+        </article>
+      </section>
+
+      <section class="page" id="reposPage">
+        <article class="panel repo-panel">
+          <div class="panel-heading">
+            <div><p class="panel-kicker">仓库画像</p><h2>固定仓库画像</h2></div>
+            <span class="badge" id="repoCount">0 个仓库</span>
+          </div>
+          <p class="hint">每行一个 GitHub 仓库，支持 owner/repo 或完整 GitHub 地址。启动采集时会从这里读取，并自动随机切换采集顺序。</p>
+          <textarea id="repoList" spellcheck="false"></textarea>
+          <div class="actions">
+            <button class="primary" id="saveRepos">保存仓库画像</button>
+            <button class="ghost" id="resetRepos">恢复默认仓库</button>
+          </div>
+          <div class="source-list" id="repoItems"></div>
+        </article>
+        <article class="panel source-profile-panel">
+          <div class="panel-heading">
+            <div><p class="panel-kicker">来源画像</p><h2>来源画像</h2></div>
+            <button class="ghost" id="refreshProfiles">刷新画像</button>
+          </div>
+          <p class="hint">系统会把每个来源地址的成功、失败和产出节点数写入数据库，用于下一次采集排序提权。</p>
+          <div class="profile-list" id="sourceProfiles"></div>
+        </article>
+      </section>
+
+      <section class="page" id="validatePage">
+        <article class="panel control-panel">
+          <div class="panel-heading">
+            <div><p class="panel-kicker">节点验证</p><h2>节点验证</h2></div>
+            <span class="badge" id="validatorBadge">已停止</span>
+          </div>
+          <div class="form-grid four">
+            <label>线程数<input id="validatorWorkers" type="number" min="1" max="50" value="20"></label>
+            <label>验证数量<input id="validatorLimit" type="number" min="1" max="10000" value="500"></label>
+            <label>检查轮数<input id="validatorRounds" type="number" min="1" max="10" value="1"></label>
+            <label>超时（秒）<input id="validatorTimeout" type="number" min="2" max="60" value="5"></label>
+          </div>
+          <label class="checkbox"><input id="validatorRevalidate" type="checkbox"> 包含已经验证过的节点</label>
+          <div class="actions">
+            <button class="primary" id="startValidator">验证节点</button>
+            <button class="ghost" id="recheckValidNodes">复检有效节点</button>
+            <button class="danger" id="stopValidator">停止验证</button>
+          </div>
+          <div class="module-meter-grid validation-meter" aria-label="验证运行统计">
+            <article><span>验证状态</span><strong id="validateMetricState">已停止</strong><small id="validateMetricReason">等待验证指令</small></article>
+            <article><span>待验证</span><strong id="validateMetricPending">0</strong><small id="validateMetricPendingDelta">变化 0</small></article>
+            <article><span>有效节点</span><strong id="validateMetricValid">0</strong><small id="validateMetricValidDelta">新增 0</small></article>
+            <article><span>质量水位</span><strong id="validateMetricWatermark">0%</strong><small id="validateMetricWatermarkText">阈值 1000</small></article>
+          </div>
+          <div class="quality-funnel" aria-label="验证质量漏斗">
+            <article><span>候选</span><strong id="funnelPending">0</strong></article>
+            <article><span>已入库有效</span><strong id="funnelValid">0</strong></article>
+            <article><span>优质订阅池</span><strong id="funnelPremium">0</strong></article>
+            <article><span>累计剔除</span><strong id="funnelInvalid">0</strong></article>
+          </div>
+          <pre class="module-log" id="validateLogs">暂无验证日志。</pre>
+        </article>
+        <article class="panel xray-panel">
+          <div class="panel-heading">
+            <div><p class="panel-kicker">Xray 内核</p><h2>Xray 版本管理</h2></div>
+            <span class="badge" id="xrayAvailableBadge">未检查</span>
+          </div>
+          <div class="auto-status-grid">
+            <div><strong id="xrayCurrentPath">-</strong><small>当前识别到的 Xray 路径</small></div>
+            <div><strong id="xrayCurrentVersion">-</strong><small>当前 Xray 版本</small></div>
+            <div><strong id="xrayGeoipPath">-</strong><small>GeoIP / GeoSite 数据状态</small></div>
+          </div>
+          <div class="form-grid four">
+            <label>目标平台<select id="xrayPlatform"><option value="windows">Windows</option><option value="linux">Linux</option><option value="darwin">macOS</option></select></label>
+            <label>CPU 架构<select id="xrayArch"><option value="amd64">amd64 / x64</option><option value="arm64">arm64</option></select></label>
+            <label>官方版本<select id="xrayReleaseSelect"><option value="">请先拉取官方版本</option></select></label>
+            <label>下载包<select id="xrayAssetSelect"><option value="">自动匹配下载包</option></select></label>
+          </div>
+          <div class="actions">
+            <button class="primary" id="loadXrayReleases">拉取官方版本</button>
+            <button class="ghost" id="downloadXrayRelease">下载所选版本</button>
+            <button class="ghost" id="refreshRuntimeStatus">刷新内核状态</button>
+          </div>
+          <div class="profile-list" id="xrayLocalVersions"></div>
+          <p class="hint">下载不会自动切换当前内核；切换必须在本地版本列表里手动点击“设为当前”。验证任务运行中禁止切换，只允许下载。</p>
+        </article>
+      </section>
+
+      <section class="page" id="acceptancePage">
+        <article class="panel acceptance-panel">
+          <div class="panel-heading">
+            <div><p class="panel-kicker">真实链路压测</p><h2>真实验收 / 压测中心</h2></div>
+            <span class="badge" id="acceptanceBadge">已停止</span>
+          </div>
+          <div class="notice-card" id="acceptanceNotice">通过现有后台 API、BOT 模拟、公开订阅入口和 Sub-Store 转换接口执行，不重写业务逻辑。</div>
+          <div class="auto-status-grid">
+            <div><span class="status-light" id="acceptanceLight"></span><strong id="acceptanceState">等待启动</strong><small>当前验收任务</small></div>
+            <div><strong id="acceptanceTotal">0</strong><small>最近报告领取总数</small></div>
+            <div><strong id="acceptanceSuccess">0</strong><small>最近报告成功</small></div>
+            <div><strong id="acceptanceFailed">0</strong><small>最近报告失败</small></div>
+          </div>
+          <div class="form-grid four">
+            <label>采集目标节点数<input id="acceptanceCollectTarget" type="number" min="1" value="20000"></label>
+            <label>有效节点目标数<input id="acceptanceValidTarget" type="number" min="1" value="100"></label>
+            <label>领取次数<input id="acceptanceClaimRounds" type="number" min="1" value="30"></label>
+            <label>每分钟领取次数<input id="acceptanceClaimRate" type="number" min="1" value="30"></label>
+          </div>
+          <div class="form-grid four">
+            <label>群组关键词<input id="acceptanceKeyword" value="我要节点"></label>
+            <label>指定口令<input id="acceptanceCode" autocomplete="off" placeholder="留空自动读取当前后台口令"></label>
+          </div>
+          <div class="form-grid two">
+            <label class="checkbox"><input id="acceptanceSkipCollect" type="checkbox" checked> 跳过采集</label>
+            <label class="checkbox"><input id="acceptanceSkipValidate" type="checkbox" checked> 跳过验证</label>
+            <label class="checkbox"><input id="acceptanceSmoke" type="checkbox"> 快速验收模式</label>
+            <label class="checkbox"><input id="acceptanceKeepSubscriptions" type="checkbox"> 保留测试订阅链接</label>
+          </div>
+          <div class="actions">
+            <button class="primary" id="startAcceptance">启动真实验收</button>
+            <button class="danger" id="stopAcceptance">停止验收</button>
+            <button class="ghost" id="refreshAcceptance">刷新报告</button>
+          </div>
+          <h3>随机格式结果</h3>
+          <div class="profile-list" id="acceptanceTargetStats"></div>
+          <h3>最近报告</h3>
+          <div class="profile-list" id="acceptanceReports"></div>
+        </article>
+      </section>
+
+      <section class="page" id="maintenancePage">
+        <article class="panel maintenance-panel">
+          <div class="panel-heading">
+            <div><p class="panel-kicker">系统维护</p><h2>系统维护</h2></div>
+            <button class="ghost" id="refreshMaintenance">刷新</button>
+          </div>
+          <div class="notice-card" id="maintenanceNotice">自动维护由总控调度，默认每天低峰清理过期日志和访问明细。</div>
+          <label class="checkbox"><input id="maintenanceEnabled" type="checkbox"> 启用自动维护</label>
+          <div class="form-grid five">
+            <label>执行小时<input id="maintenanceHour" type="number" min="0" max="23" value="3"></label>
+            <label>执行分钟<input id="maintenanceMinute" type="number" min="0" max="59" value="30"></label>
+            <label>转换日志天数<input id="converterLogDays" type="number" min="1" max="3650" value="30"></label>
+            <label>转换日志最多条数<input id="converterLogMaxRows" type="number" min="100" max="1000000" value="5000"></label>
+            <label>机器人日志天数<input id="botLogDays" type="number" min="1" max="3650" value="30"></label>
+            <label>机器人日志最多条数<input id="botLogMaxRows" type="number" min="100" max="1000000" value="10000"></label>
+            <label>领取记录天数<input id="claimRecordDays" type="number" min="1" max="3650" value="90"></label>
+            <label>订阅访问天数<input id="subscriptionAccessDays" type="number" min="1" max="3650" value="30"></label>
+            <label>访问日志最多条数<input id="subscriptionAccessMaxRows" type="number" min="100" max="1000000" value="20000"></label>
+            <label>未验证节点保留天数<input id="staleUnvalidatedNodeDays" type="number" min="1" max="3650" value="3"></label>
+            <label>无效节点天数<input id="invalidNodeDays" type="number" min="1" max="3650" value="30"></label>
+            <label>机器人验证任务天数<input id="botVerificationDays" type="number" min="1" max="3650" value="7"></label>
+            <label>转换缓存未访问天数<input id="conversionCacheDays" type="number" min="1" max="3650" value="7"></label>
+            <label>转换缓存最多条数<input id="conversionCacheMaxRows" type="number" min="10" max="1000000" value="1000"></label>
+            <label>&#32479;&#35745;&#25968;&#25454;&#20445;&#30041;&#22825;&#25968;<input id="dailyStatsDays" type="number" min="30" max="3650" value="365"></label>
+            <label>&#25104;&#21151;&#39564;&#25910;&#25253;&#21578;&#22825;&#25968;<input id="acceptanceReportDays" type="number" min="1" max="3650" value="7"></label>
+            <label>&#22833;&#36133;&#39564;&#25910;&#25253;&#21578;&#22825;&#25968;<input id="acceptanceFailedReportDays" type="number" min="1" max="3650" value="30"></label>
+            <label>&#25104;&#21151;&#25253;&#21578;&#26368;&#22810;&#20221;&#25968;<input id="acceptanceReportMaxFiles" type="number" min="10" max="1000000" value="300"></label>
+            <label>维护记录天数<input id="maintenanceRecordDays" type="number" min="1" max="3650" value="180"></label>
+          </div>
+          <label class="checkbox"><input id="vacuumAfterCleanup" type="checkbox"> 清理后压缩数据库</label>
+          <div class="actions">
+            <button class="primary" id="saveMaintenanceConfig">保存维护配置</button>
+            <button class="ghost" id="runMaintenanceCleanup">立即清理</button>
+            <button class="ghost" id="clearConversionCache">清空转换缓存</button>
+          </div>
+          <div class="stats-grid compact">
+            <article class="stat-card"><span>数据库体积</span><strong id="databaseSize">0 B</strong></article>
+            <article class="stat-card"><span>运行日志体积</span><strong id="runtimeLogSize">0 B</strong></article>
+            <article class="stat-card"><span>验收报告体积</span><strong id="acceptanceReportSize">0 B</strong></article>
+            <article class="stat-card"><span>最近清理</span><strong id="lastCleanupRows">0</strong></article>
+            <article class="stat-card"><span>转换缓存条数</span><strong id="conversionCacheRows">0</strong></article>
+            <article class="stat-card"><span>缓存命中次数</span><strong id="conversionCacheHits">0</strong></article>
+          </div>
+          <div class="profile-list" id="maintenanceTableCounts"></div>
+          <details class="maintenance-details">
+            <summary>每日统计明细</summary>
+            <div class="profile-list" id="dailyStatsList"></div>
+          </details>
+          <pre class="result-box" id="maintenanceLastCleanup">暂无维护记录</pre>
+        </article>
+      </section>
+
+      <section class="page" id="subscriptionPage">
+        <article class="panel subscription-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="panel-kicker">订阅链接</p>
+              <h2>订阅链接管理</h2>
+              <p class="hint">管理 BOT 领取后发放的客户端订阅 token。链接会绑定当前口令版本；更换口令版本后，旧链接无法返回真实节点。</p>
+            </div>
+            <button class="ghost" id="refreshSubscriptions">刷新链接</button>
+          </div>
+          <div class="form-grid three">
+            <label>订阅名称
+              <small>用于后台识别这条链接。</small>
+              <input id="subscriptionName" value="临时订阅">
+            </label>
+            <label>失效方式
+              <small>可选择单一条件，也可以让任意一个条件达到后失效。</small>
+              <select id="subscriptionMode">
+                <option value="usage">按访问次数失效</option>
+                <option value="time">按过期时间失效</option>
+                <option value="either">次数或时间任一达到即失效</option>
+              </select>
+            </label>
+            <label>最大访问次数
+              <small>按次数失效时生效。V2RayN 每次更新订阅都会消耗一次。</small>
+              <input id="subscriptionMaxUses" type="number" min="1" value="10">
+            </label>
+            <label>最多导出节点数
+              <small>默认 100 条。导出时按低延迟、亚洲加权和稳定性评分排序。</small>
+              <input id="subscriptionExportLimit" type="number" min="1" max="10000" value="20">
+            </label>
+            <label>订阅格式
+              <small>生成后会自动复制这个格式的客户端订阅链接。</small>
+              <select id="subscriptionDefaultTarget">
+                <option value="base64">通用 Base64</option>
+                <option value="v2rayng">V2RayNG</option>
+                <option value="clash-verge">Clash Verge</option>
+                <option value="sing-box">Sing-box</option>
+                <option value="surge">Surge</option>
+                <option value="shadowrocket">Shadowrocket 小火箭</option>
+                <option value="raw">原始节点</option>
+              </select>
+            </label>
+            <label>过期时间
+              <small>按时间失效时生效。可留空，默认 24 小时后过期。</small>
+              <input id="subscriptionExpiresAt" type="datetime-local">
+            </label>
+            <label>节点命名模板
+              <small>留空使用“有效节点处理”里的全局模板。</small>
+              <input id="subscriptionTemplate" placeholder="{country_name} {protocol} {validated_date} #{index}">
+            </label>
+            <label>备注
+              <small>可填写用途、客户、设备名等。</small>
+              <input id="subscriptionRemark" placeholder="例如：测试手机 / 朋友 A">
+            </label>
+          </div>
+          <div class="actions">
+            <button class="primary" id="createSubscription">生成订阅链接</button>
+          </div>
+          <div class="module-meter-grid subscription-meter" aria-label="订阅运行统计">
+            <article><span>订阅链接</span><strong id="subscriptionMetricLinks">0</strong><small id="subscriptionMetricEnabled">启用 0</small></article>
+            <article><span>可导出有效节点</span><strong id="subscriptionMetricValid">0</strong><small id="subscriptionMetricPremium">优质池 0</small></article>
+            <article><span>默认导出</span><strong id="subscriptionMetricLimit">20</strong><small>每条订阅最多导出</small></article>
+            <article><span>口令版本</span><strong id="subscriptionMetricClaimVersion">-</strong><small>旧版本链接自动失效</small></article>
+          </div>
+          <div class="subscription-list" id="subscriptionList"></div>
+          <pre class="module-log" id="subscriptionLogs">暂无订阅日志。</pre>
+        </article>
+      </section>
+
+      <section class="page" id="converterPage">
+        <article class="panel converter-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="panel-kicker">订阅转换</p>
+              <h2>订阅转换</h2>
+              <p class="hint">后台轻量调用 Sub-Store 兼容服务，只使用转换接口，不下载、不内置完整 Sub-Store 仓库。可把有效节点池或粘贴内容转换为 V2RayNG、Clash Verge、Sing-box、Surge 和 Shadowrocket 小火箭格式。</p>
+            </div>
+            <button class="ghost" id="refreshConverterConfig">刷新配置</button>
+          </div>
+          <div class="notice-card" id="converterNotice">转换服务建议在 Docker/VPS 上作为独立 sidecar 运行，后台只保存服务地址和转换参数。Docker 内网推荐地址：http://sub-store:3001。</div>
+          <div class="notice-card" id="converterHealth">尚未检查 Sub-Store 服务状态。</div>
+          <div class="module-meter-grid converter-meter" aria-label="订阅转换统计">
+            <article><span>转换状态</span><strong id="converterMetricState">未检查</strong><small id="converterMetricBackend">等待 Sub-Store 状态</small></article>
+            <article><span>最近转换</span><strong id="converterMetricLast">-</strong><small id="converterMetricLastMsg">暂无转换日志</small></article>
+            <article><span>输入节点</span><strong id="converterMetricNodes">0</strong><small id="converterMetricBytes">输入 0B / 输出 0B</small></article>
+            <article><span>缓存</span><strong id="converterMetricCache">0</strong><small>命中次数</small></article>
+          </div>
+          <div class="form-grid four">
+            <label>Sub-Store 服务地址
+              <small>默认只调用本机轻量服务，例如 http://127.0.0.1:3001。</small>
+              <input id="converterBackendUrl" placeholder="http://127.0.0.1:3001">
+            </label>
+            <label>下载配置名
+              <small>对应 Sub-Store 的 /download/{name}，默认 sub。</small>
+              <input id="converterProfileName" placeholder="sub">
+            </label>
+            <label>默认节点数量
+              <small>使用有效节点池时生效，默认最多 100 条。</small>
+              <input id="converterExportLimit" type="number" min="1" max="10000" value="20">
+            </label>
+            <label>转换目标
+              <small>按客户端选择输出格式。</small>
+              <select id="converterTarget"></select>
+            </label>
+            <label>输入协议类型
+              <small>手动粘贴内容时用于记录和排查；实际解析仍交给 Sub-Store。</small>
+              <select id="converterInputType"></select>
+            </label>
+          </div>
+          <label class="checkbox"><input id="converterPreferAsia" type="checkbox" checked> 使用有效节点池时优先亚洲节点
+            <small>亚洲质量不足时沿用现有策略自动回退全球候选。</small>
+          </label>
+          <div class="form-grid two converter-io">
+            <label>输入来源
+              <small>可直接使用数据库中的有效节点池，也可粘贴外部订阅或节点内容。</small>
+              <select id="converterInputMode">
+                <option value="valid_nodes">使用有效节点池</option>
+                <option value="custom">粘贴订阅内容</option>
+              </select>
+              <textarea id="converterInput" spellcheck="false" placeholder="选择“粘贴订阅内容”后，在这里粘贴原始订阅、节点 URI 或 Base64 内容。"></textarea>
+            </label>
+            <label>转换结果
+              <small id="converterSummary">尚未转换。</small>
+              <textarea id="converterOutput" spellcheck="false" placeholder="转换完成后会显示目标客户端订阅内容。"></textarea>
+            </label>
+          </div>
+          <div class="actions">
+            <button class="primary" id="convertSubscription">转换订阅</button>
+            <button class="ghost" id="checkConverterHealth">检查转换服务</button>
+            <button class="ghost" id="saveConverterConfig">保存转换配置</button>
+            <button class="ghost" id="copyConvertedSubscription">复制结果</button>
+          </div>
+          <div class="converter-log-panel">
+            <h3>转换日志</h3>
+            <div class="converter-log-list" id="converterLogs"></div>
+          </div>
+        </article>
+      </section>
+
+      <section class="page" id="claimCodePage">
+        <article class="panel claim-code-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="panel-kicker">领取口令</p>
+              <h2>领取口令配置</h2>
+              <p class="hint">用于 BOT 私聊领取新订阅链接。口令有效期和每日次数只限制领取入口；版本变更后，旧版本订阅链接无法导出真实节点。</p>
+            </div>
+            <span class="badge" id="claimCodeBadge">读取中</span>
+          </div>
+          <div class="notice-card" id="claimCodeNotice">领取口令配置保存在数据库中，Docker 或后台服务重启后仍会保留。</div>
+          <label class="checkbox"><input id="claimCodeEnabled" type="checkbox"> 启用领取口令
+            <small>关闭后，所有领取请求都会返回“口令过期”文案。</small>
+          </label>
+          <div class="form-grid three">
+            <label>领取口令
+              <small>可手动修改。用户输入必须完全匹配。</small>
+              <input id="claimCodeValue" autocomplete="off" placeholder="例如：VMTOK">
+            </label>
+            <label>口令版本
+              <small>建议用 v1、v2 或日期编号。更换后旧版本立即失效。</small>
+              <input id="claimCodeVersion" placeholder="v1">
+            </label>
+            <label>每日领取次数
+              <small>按客户端标识/IP、日期和当前版本统计成功领取次数。</small>
+              <input id="claimCodeDailyLimit" type="number" min="1" max="1000000" value="1">
+            </label>
+            <label>口令有效期
+              <small>建议设置为当天 23:59:59。超过有效期后不能领取新链接；已领取链接仍按自身有效期、次数和版本判断。</small>
+              <input id="claimCodeExpiresAt" type="datetime-local">
+            </label>
+          </div>
+          <div class="form-grid two">
+            <label>领取成功文案
+              <textarea id="claimSuccessMessage"></textarea>
+            </label>
+            <label>口令错误文案
+              <textarea id="claimWrongCodeMessage"></textarea>
+            </label>
+            <label>口令过期文案
+              <textarea id="claimExpiredMessage"></textarea>
+            </label>
+            <label>超过次数文案
+              <textarea id="claimLimitExceededMessage"></textarea>
+            </label>
+          </div>
+          <div class="actions">
+            <button class="primary" id="saveClaimCodeConfig">保存领取口令配置</button>
+            <button class="ghost" id="refreshClaimCodeConfig">刷新配置</button>
+          </div>
+          <div class="claim-test-box">
+            <div class="panel-heading">
+              <div><p class="panel-kicker">快速测试</p><h2>领取接口测试</h2></div>
+            </div>
+            <div class="form-grid three">
+              <label>测试口令<input id="claimTestCode" placeholder="输入口令"></label>
+              <label>测试版本<input id="claimTestVersion" placeholder="v1"></label>
+              <label>客户端标识<input id="claimTestClient" placeholder="留空则按本机 IP"></label>
+            </div>
+            <div class="actions">
+              <button class="ghost" id="testClaimCode">测试领取</button>
+            </div>
+            <div class="export-summary" id="claimTestResult">尚未测试。</div>
+          </div>
+        </article>
+      </section>
+
+      <section class="page" id="botPage">
+        <article class="panel bot-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="panel-kicker">机器人配置</p>
+              <h2>机器人控制台</h2>
+              <p class="hint">群组命中关键词后发送私聊领取按钮；用户点击后自动进入领取说明。</p>
+            </div>
+            <span class="badge" id="botBadge">已停止</span>
+          </div>
+          <div class="notice-card">当前使用视频平台引导 + 视频内口令轻量验证闭环：引导用户订阅频道、观看最新免费节点领取视频，再通过私聊口令完成验证；不做强制订阅校验。</div>
+          <div class="auto-status-grid bot-status-grid">
+            <div><span class="status-light" id="botStateLight"></span><strong id="botState">已停止</strong><small>机器人当前运行状态</small></div>
+            <div><span class="status-light" id="botAutoLight"></span><strong id="botAutoState">自动运行已关闭</strong><small>后台重启后是否自动恢复机器人</small></div>
+          </div>
+          <div class="form-grid three">
+            <label>机器人令牌
+              <small>从机器人平台获取。保存后数据库持久化，页面再次读取时只显示脱敏内容。</small>
+              <input id="botToken" type="password" autocomplete="off" placeholder="例如：123456:ABC...">
+            </label>
+            <label>机器人用户名
+              <small>用于后台备注，例如 @VMTOK_bot。</small>
+              <input id="botUsername" placeholder="@VMTOK_bot">
+            </label>
+            <label>关键字
+              <small>每行一个。用户发送完全匹配的文字后触发回复。</small>
+              <textarea id="botKeywords" placeholder="节点&#10;订阅&#10;VMTOK"></textarea>
+            </label>
+            <label>群内提示
+              <small>群组内命中关键词后发送，并自动附带“私聊领取节点”按钮。</small>
+              <textarea id="botGroupPromptMessage"></textarea>
+            </label>
+            <label>公开访问地址
+              <small>用于生成私聊订阅卡片里的公开订阅链接，例如 https://node.huage.us。</small>
+              <input id="botPublicBaseUrl" placeholder="https://node.huage.us">
+            </label>
+            <label>YouTube 频道链接
+              <small>用于引导用户订阅频道，不做 API 强制校验。</small>
+              <input id="botYoutubeChannelUrl" placeholder="https://www.youtube.com/@your-channel">
+            </label>
+            <label>最新免费节点领取视频
+              <small>用户观看该视频获取视频内口令，再回机器人私聊完成验证。</small>
+              <input id="botLatestVideoUrl" placeholder="https://www.youtube.com/watch?v=...">
+            </label>
+          </div>
+          <div class="form-grid two">
+            <label>YouTube 引导文案
+              <small>支持变量：{youtube_channel_url}、{latest_free_node_video_url}。</small>
+              <textarea id="botYoutubeGuideMessage"></textarea>
+            </label>
+            <label>私聊领取说明
+              <small>支持变量：{version}、{expires_at}、{public_base_url}、{youtube_guide_message}。用户点击群内按钮后会自动收到这段说明。</small>
+              <textarea id="botPrivateInstructionMessage"></textarea>
+            </label>
+            <label>私发多格式订阅卡片
+              <small>支持变量：{subscription_url}、{expires_at}、{max_uses}。</small>
+              <textarea id="botSubscriptionCardMessage"></textarea>
+            </label>
+          </div>
+          <div class="form-grid three">
+            <label>机器人订阅最大访问次数
+              <input id="botSubscriptionMaxUses" type="number" min="1" max="1000000" value="10">
+            </label>
+            <label>机器人订阅有效小时
+              <input id="botSubscriptionExpireHours" type="number" min="1" max="8760" value="24">
+            </label>
+            <label>机器人订阅导出节点数
+              <input id="botSubscriptionExportLimit" type="number" min="1" max="10000" value="20">
+            </label>
+          </div>
+          <label class="checkbox"><input id="botAutoRun" type="checkbox"> 自动运行机器人
+            <small>开启后保存到数据库。后台服务每次启动时，若令牌已配置，将自动启动机器人。</small>
+          </label>
+          <div class="actions">
+            <button class="primary" id="saveBotConfig">保存机器人配置</button>
+            <button class="primary" id="startBot">立即启动机器人</button>
+            <button class="ghost" id="stopBot">仅停止本次运行</button>
+            <button class="danger" id="disableBot">关闭自动运行并停止</button>
+            <button class="ghost" id="refreshBot">刷新状态</button>
+          </div>
+        </article>
+        <article class="panel bot-sim-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="panel-kicker">流程模拟</p>
+              <h2>机器人流程验证</h2>
+              <p class="hint">只调用本地机器人处理逻辑，不连接外部平台，不向真实群组或用户发送消息。</p>
+            </div>
+            <div class="actions compact-actions">
+              <button class="ghost" id="runBotSimulation">运行单步模拟</button>
+              <button class="primary" id="runBotFlowSimulation">运行完整流程</button>
+            </div>
+          </div>
+          <div class="form-grid five">
+            <label>会话类型
+              <select id="botSimChatType">
+                <option value="group">群组</option>
+                <option value="private">私聊</option>
+              </select>
+            </label>
+            <label>模拟消息<input id="botSimText" value="节点"></label>
+            <label>用户编号<input id="botSimUserId" value="200001"></label>
+            <label>会话编号<input id="botSimChatId" value="-100001"></label>
+            <label>用户名<input id="botSimUsername" value="sim_user"></label>
+          </div>
+          <div class="export-summary" id="botSimResult">尚未运行模拟验证。</div>
+          <div class="profile-list" id="botFlowSteps"></div>
+        </article>
+        <article class="panel">
+          <div class="panel-heading">
+            <div><p class="panel-kicker">消息记录</p><h2>最近消息记录</h2></div>
+          </div>
+          <div class="profile-list" id="botMessages"></div>
+        </article>
+      </section>
+
+      <section class="page" id="processingPage">
+        <article class="panel processing-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="panel-kicker">有效节点处理</p>
+              <h2>有效节点处理</h2>
+              <p class="hint">这里只负责有效节点命名模板和预览，不直接生成对外订阅。需要发放订阅时，请到“订阅链接管理”生成带随机 token、次数限制和过期时间的订阅链接。</p>
+            </div>
+            <button class="ghost" id="refreshProcessingPreview">刷新预览</button>
+          </div>
+          <div class="form-grid two">
+            <label>节点名字模板
+              <small>示例：{country_name} {protocol} {validated_date} #{index}</small>
+              <input id="renameTemplate" type="text" value="{country_name} {protocol} {validated_date} #{index}">
+            </label>
+          </div>
+          <div class="variable-grid">
+            <div><strong>{country_name}</strong><span>根据出口 IP 匹配的中文国家名，例如 美国、德国。</span></div>
+            <div><strong>{country}</strong><span>国家代码，例如 US、DE；多出口国家会显示 DE,FR。</span></div>
+            <div><strong>{protocol}</strong><span>协议大写名，例如 VLESS、VMESS、SS。</span></div>
+            <div><strong>{protocol_lower}</strong><span>协议小写名，例如 vless、vmess。</span></div>
+            <div><strong>{validated_date}</strong><span>最后验证日期，例如 2026-06-02。</span></div>
+            <div><strong>{validated_at}</strong><span>最后验证完整时间。</span></div>
+            <div><strong>{date}</strong><span>本次导出日期。</span></div>
+            <div><strong>{index}</strong><span>三位序号，例如 001、002。</span></div>
+            <div><strong>{proxy_ip}</strong><span>第一个出口 IP。</span></div>
+            <div><strong>{proxy_ips}</strong><span>全部出口 IP。</span></div>
+            <div><strong>{latency}</strong><span>验证耗时秒数，保留两位小数。</span></div>
+          </div>
+          <div class="actions">
+            <button class="primary" id="saveRenameTemplate">保存模板</button>
+            <button class="ghost" id="previewRenameTemplate">预览改名</button>
+            <button class="ghost" id="exportRawNodes">导出原始节点</button>
+            <button class="ghost" id="copySubscription">复制导出内容</button>
+          </div>
+          <div class="export-summary" id="exportSummary">这里不再生成 Base64 订阅。订阅发放请使用“订阅链接管理”。</div>
+          <textarea id="subscriptionOutput" spellcheck="false" placeholder="导出的原始节点会显示在这里。"></textarea>
+          <div class="node-list" id="processingPreview"></div>
+        </article>
+      </section>
+
+      <section class="page" id="nodesPage">
+      <article class="panel nodes-panel">
+        <div class="panel-heading">
+          <div><p class="panel-kicker">有效节点</p><h2>有效节点</h2></div>
+          <div class="compact-filter">
+            <select id="validProtocol"><option value="">全部协议</option></select>
+            <select id="validCountry"><option value="">全部国家</option></select>
+            <button class="ghost" id="refreshNodes">刷新</button>
+          </div>
+        </div>
+        <div class="node-list" id="nodeList"></div>
+        <div class="pagination">
+          <button class="ghost" id="previousPage">上一页</button>
+          <span id="pageText">第 1 页</span>
+          <button class="ghost" id="nextPage">下一页</button>
+        </div>
+      </article>
+      </section>
+    </section>
+  </main>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <script src="/adminhuage/app.js"></script>
+</body>
+</html>
