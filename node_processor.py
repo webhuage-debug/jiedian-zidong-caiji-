@@ -12,6 +12,7 @@ from typing import Dict, Iterable, List
 from app_time import beijing_date
 
 DEFAULT_RENAME_TEMPLATE = "{country_name} {protocol} {validated_date} #{index}"
+MAX_NODE_NAME_LENGTH = 80
 
 COUNTRY_NAMES_ZH = {
     "AD": "安道尔", "AE": "阿联酋", "AF": "阿富汗", "AG": "安提瓜和巴布达", "AI": "安圭拉",
@@ -113,6 +114,29 @@ def render_name(template: str, node: Dict[str, object], index: int, export_date:
     return " ".join(name.split())
 
 
+def clean_node_name(value: str, index: int, max_length: int = MAX_NODE_NAME_LENGTH) -> str:
+    name = re.sub(r"[\x00-\x1f\x7f]+", " ", str(value or ""))
+    name = " ".join(name.split()).strip()
+    if not name:
+        name = "Node " + f"{index:03d}"
+    return truncate_node_name(name, max_length)
+
+
+def truncate_node_name(value: str, max_length: int = MAX_NODE_NAME_LENGTH) -> str:
+    max_length = max(16, int(max_length or MAX_NODE_NAME_LENGTH))
+    return str(value or "")[:max_length].strip() or "Node"
+
+
+def unique_node_name(base_name: str, index: int, seen: Dict[str, int], max_length: int = MAX_NODE_NAME_LENGTH) -> str:
+    base = clean_node_name(base_name, index, max_length)
+    count = seen.get(base, 0) + 1
+    seen[base] = count
+    if count == 1:
+        return base
+    suffix = " #" + str(count)
+    return truncate_node_name(base, max_length - len(suffix)) + suffix
+
+
 def set_url_fragment(uri: str, name: str) -> str:
     fragment = urllib.parse.quote(name, safe="")
     return uri.split("#", 1)[0] + "#" + fragment
@@ -142,8 +166,9 @@ def rename_node(uri: str, name: str) -> str:
 def processed_nodes(nodes: Iterable[Dict[str, object]], template: str) -> List[Dict[str, str]]:
     export_date = beijing_date()
     rows = []
+    seen_names: Dict[str, int] = {}
     for index, node in enumerate(nodes, 1):
-        name = render_name(template, node, index, export_date)
+        name = unique_node_name(render_name(template, node, index, export_date), index, seen_names)
         rows.append({
             "name": name,
             "protocol": str(node.get("protocol") or "").upper(),
@@ -155,8 +180,13 @@ def processed_nodes(nodes: Iterable[Dict[str, object]], template: str) -> List[D
     return rows
 
 
-def subscription_base64(nodes: Iterable[Dict[str, object]], template: str) -> Dict[str, object]:
-    rows = processed_nodes(nodes, template)
+def subscription_base64_from_rows(rows: Iterable[Dict[str, str]]) -> Dict[str, object]:
+    rows = list(rows)
     plain = "\n".join(row["uri"] for row in rows)
     encoded = base64.b64encode(plain.encode("utf-8")).decode("ascii")
     return {"subscription": encoded, "count": len(rows), "plain_bytes": len(plain.encode("utf-8"))}
+
+
+def subscription_base64(nodes: Iterable[Dict[str, object]], template: str) -> Dict[str, object]:
+    rows = processed_nodes(nodes, template)
+    return subscription_base64_from_rows(rows)

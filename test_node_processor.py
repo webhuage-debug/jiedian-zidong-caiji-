@@ -1,6 +1,7 @@
 import base64
 import json
 import unittest
+import urllib.parse
 
 from node_processor import processed_nodes, subscription_base64
 
@@ -50,6 +51,39 @@ class NodeProcessorTest(unittest.TestCase):
         self.assertEqual(decoded["ps"], "德国 VMESS 001")
         self.assertEqual(decoded["name"], "德国 VMESS 001")
         self.assertEqual(result["count"], 1)
+
+    def test_duplicate_names_get_stable_suffixes(self):
+        nodes = [
+            {
+                "uri": "vless://uuid" + str(index) + "@example.com:443#old",
+                "protocol": "vless",
+                "country": "US",
+                "proxy_ips": "203.0.113." + str(index),
+                "seconds": 1.0,
+                "last_validated": "2026-06-02 08:00:00",
+            }
+            for index in range(1, 4)
+        ]
+        rows = processed_nodes(nodes, "free-nodes")
+        names = [row["name"] for row in rows]
+        fragments = [
+            urllib.parse.unquote(urllib.parse.urlsplit(row["uri"]).fragment)
+            for row in rows
+        ]
+        self.assertEqual(names, ["free-nodes", "free-nodes #2", "free-nodes #3"])
+        self.assertEqual(fragments, names)
+
+    def test_long_names_are_truncated_before_export(self):
+        node = {
+            "uri": "vless://uuid@example.com:443",
+            "protocol": "vless",
+            "country": "US",
+            "proxy_ips": "203.0.113.1",
+            "seconds": 1.0,
+            "last_validated": "2026-06-02 08:00:00",
+        }
+        rows = processed_nodes([node], "x" * 100)
+        self.assertEqual(len(rows[0]["name"]), 80)
 
 
 if __name__ == "__main__":

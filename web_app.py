@@ -36,7 +36,7 @@ from app_version import APP_RELEASE_NAME, APP_VERSION
 from bot_service import TelegramBot
 from node_database import NodeDatabase
 from node_collector import DEFAULT_REPOS
-from node_processor import DEFAULT_RENAME_TEMPLATE, processed_nodes, subscription_base64
+from node_processor import DEFAULT_RENAME_TEMPLATE, processed_nodes, subscription_base64, subscription_base64_from_rows
 from node_validator import resolve_xray_path
 from runtime_tasks import LogBus, ManagedTask
 from subscription_filter import DEFAULT_SUBSCRIPTION_TARGET, MAX_SUBSCRIPTION_TARGET, final_subscription_nodes, normalize_subscription_limit
@@ -1202,8 +1202,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
         template = link["rename_template"] or config["rename_template"]
         limit = normalize_subscription_limit(link.get("export_limit") or DEFAULT_SUBSCRIPTION_TARGET)
         nodes = final_subscription_nodes(database.export_subscription_nodes(limit, True), limit)
+        rows = processed_nodes(nodes, template)
         if target_id in ("base64", ""):
-            result = subscription_base64(nodes, template)
+            result = subscription_base64_from_rows(rows)
             return {
                 "target_id": "base64",
                 "target_name": "通用 Base64",
@@ -1212,7 +1213,6 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 "count": int(result["count"]),
             }
         if target_id == "raw":
-            rows = processed_nodes(nodes, template)
             return {
                 "target_id": "raw",
                 "target_name": "原始节点",
@@ -1225,7 +1225,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         converter_config = database.subscription_converter_config()
         converter_config["export_limit"] = limit
         converter_config["prefer_asia"] = True
-        content = "\n".join(str(row["uri"]) for row in nodes)
+        content = "\n".join(str(row["uri"]) for row in rows)
         input_mode = "subscription_link"
         input_type = "mixed"
         input_bytes = len(content.encode("utf-8"))
@@ -1748,12 +1748,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 content = str(payload.get("content", "")).strip()
                 node_count = len([line for line in content.splitlines() if line.strip()])
             else:
+                template = database.processing_config()["rename_template"]
                 nodes = final_subscription_nodes(
                     database.export_subscription_nodes(int(config["export_limit"]), bool(config["prefer_asia"])),
                     int(config["export_limit"]),
                 )
-                content = "\n".join(str(row["uri"]) for row in nodes)
-                node_count = len(nodes)
+                rows = processed_nodes(nodes, template)
+                content = "\n".join(str(row["uri"]) for row in rows)
+                node_count = len(rows)
         input_bytes = len(content.encode("utf-8"))
         claim_version = str(claim_config.get("version") or "")
         cache_meta = subscription_conversion_cache_identity(config, target_id, content, input_mode, input_type, claim_version)

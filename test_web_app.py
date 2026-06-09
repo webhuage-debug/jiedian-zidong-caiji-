@@ -3,6 +3,7 @@ import json
 import unittest
 import tempfile
 import urllib.error
+import urllib.parse
 from http import HTTPStatus
 from pathlib import Path
 
@@ -422,6 +423,59 @@ class WebAppRoutingTest(unittest.TestCase):
                 self.assertNotIn("uk@example.com", captured["content"])
                 self.assertNotIn("ru@example.com", captured["content"])
                 self.assertNotIn("ad@example.com", captured["content"])
+
+    def test_subscription_converter_input_has_unique_node_names(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "nodes.db"
+            with NodeDatabase(database_path) as database:
+                database.update_claim_code_config({"version": "v-unique", "enabled": True})
+                link = database.create_subscription_link(
+                    "unique-token",
+                    "unique",
+                    "usage",
+                    rename_template="free-nodes",
+                    export_limit=30,
+                    claim_code_version="v-unique",
+                )
+                for index, country in enumerate(["HK", "JP", "SG"], 1):
+                    database.upsert_valid_node(
+                        "vless://same" + str(index) + "@example.com:443#old",
+                        "ok",
+                        0.1,
+                        "203.0.113." + str(index),
+                        country,
+                    )
+
+                captured = {}
+                original_convert = web_app.convert_with_sub_store
+                try:
+                    def fake_convert(config, target_id, content, timeout=25):
+                        captured["content"] = content
+                        names = [
+                            urllib.parse.unquote(urllib.parse.urlsplit(line).fragment)
+                            for line in content.splitlines()
+                            if line.strip()
+                        ]
+                        return {
+                            "target": "Clash Verge",
+                            "content": "proxies:\n" + "\n".join("  - name: " + name for name in names),
+                            "bytes": len(content.encode("utf-8")),
+                        }
+
+                    web_app.convert_with_sub_store = fake_convert
+                    handler = object.__new__(DashboardHandler)
+                    result = handler.subscription_output(database, link, database.claim_code_config(), "clash-verge")
+                finally:
+                    web_app.convert_with_sub_store = original_convert
+
+                names = [
+                    urllib.parse.unquote(urllib.parse.urlsplit(line).fragment)
+                    for line in captured["content"].splitlines()
+                    if line.strip()
+                ]
+                self.assertEqual(names, ["free-nodes", "free-nodes #2", "free-nodes #3"])
+                self.assertEqual(len(names), len(set(names)))
+                self.assertIn("free-nodes #2", result["content"])
 
     def test_bot_simulation_uses_local_logic_without_telegram(self):
         with tempfile.TemporaryDirectory() as directory:
