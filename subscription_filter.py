@@ -30,12 +30,25 @@ def final_subscription_nodes(nodes: Iterable[Dict[str, object]], limit: object =
 
 def subscription_sort_key(row: Dict[str, object]) -> tuple:
     return (
+        -subscription_quality_score(row),
         publish_region_rank(row),
-        float(row.get("seconds") or 9999.0),
-        -int(row.get("validation_count") or 0),
         recent_first_key(row.get("last_validated")),
-        -float(row.get("premium_score") or row.get("quality_score") or 0),
+        float(row.get("seconds") or 9999.0),
+        str(row.get("uri") or ""),
     )
+
+
+def subscription_quality_score(row: Dict[str, object]) -> float:
+    """Score publishable nodes without letting London VPS latency dominate."""
+    rank = publish_region_rank(row)
+    region_score = 300.0 if rank == 0 else 220.0 if rank == 1 else 150.0 if rank == 2 else 0.0
+    validations = min(max(int(row.get("validation_count") or 0), 0), 20)
+    stability_score = validations * 18.0
+    latency = max(float(row.get("seconds") or 9999.0), 0.0)
+    latency_score = max(0.0, 260.0 - latency * 85.0)
+    high_latency_penalty = max(0.0, latency - 2.0) * 90.0
+    base_score = float(row.get("premium_score") or row.get("quality_score") or 0)
+    return round(region_score + stability_score + latency_score + base_score * 0.05 - high_latency_penalty, 2)
 
 
 def recent_first_key(value: object) -> tuple:

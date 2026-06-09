@@ -105,13 +105,27 @@ class ExtractFindingsTest(unittest.TestCase):
     def test_stores_unique_nodes_without_text_export(self):
         with tempfile.TemporaryDirectory() as directory:
             exporter = DatabaseNodeSink(Path(directory) / "nodes.db")
-            node = Finding("node", "vless://uuid@example.com:443", "owner/repo", "nodes.txt", "plain")
+            node = Finding("node", "vless://uuid@example.com:443#Tokyo", "owner/repo", "nodes.txt", "plain")
             exporter.consume([node, node])
             exporter.close()
             self.assertFalse((Path(directory) / "nodes.txt").exists())
             with NodeDatabase(Path(directory) / "nodes.db") as database:
                 self.assertEqual(database.count("节点库"), 1)
                 self.assertEqual(database.stats()["duplicate_filtered"], 1)
+
+    def test_collection_sink_filters_unknown_and_ad_nodes_before_database(self):
+        with tempfile.TemporaryDirectory() as directory:
+            exporter = DatabaseNodeSink(Path(directory) / "nodes.db")
+            exporter.consume([
+                Finding("node", "vless://hk@example.com:443#Hong%20Kong", "owner/repo", "nodes.txt", "plain"),
+                Finding("node", "vless://unknown@example.com:443#unknown", "owner/repo", "nodes.txt", "plain"),
+                Finding("node", "vless://ad@example.com:443#Telegram%20Channel", "owner/repo", "nodes.txt", "plain"),
+            ])
+            exporter.close()
+            with NodeDatabase(Path(directory) / "nodes.db") as database:
+                self.assertEqual(database.count("节点库"), 1)
+                rows = list(database.iter_nodes(revalidate=True))
+                self.assertEqual(rows, ["vless://hk@example.com:443#Hong%20Kong"])
 
     def test_converts_structured_mihomo_yaml_node(self):
         findings = extract_findings(

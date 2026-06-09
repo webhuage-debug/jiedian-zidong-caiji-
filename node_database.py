@@ -11,13 +11,14 @@ from pathlib import Path
 from typing import Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
 
 from app_time import beijing_now, beijing_timestamp
-from node_region import is_publishable_region, publish_region, publish_region_rank
+from node_region import is_publishable_region, publish_region
 from subscription_filter import (
     DEFAULT_SUBSCRIPTION_TARGET,
     MAX_SUBSCRIPTION_TARGET,
     MIN_SUBSCRIPTION_TARGET,
     final_subscription_nodes,
     normalize_subscription_limit,
+    subscription_quality_score,
     subscription_sort_key,
 )
 
@@ -1621,13 +1622,8 @@ class NodeDatabase:
     def export_valid_nodes(self, limit: int = 100, prefer_asia: bool = True) -> List[Dict[str, object]]:
         limit = max(1, min(int(limit), 10000))
         rows = self.all_valid_nodes(quality_order=True)
-        asia_rows = [row for row in rows if row["asia"]]
-        global_rows = [row for row in rows if not row["asia"]]
         if prefer_asia:
-            selected = asia_rows[:limit]
-            if len(selected) < limit:
-                selected.extend(global_rows[:limit - len(selected)])
-            return selected
+            return final_subscription_nodes(rows, limit)
         return rows[:limit]
 
     def refresh_premium_subscription_pool(
@@ -1641,6 +1637,8 @@ class NodeDatabase:
         rows = self.all_valid_nodes(quality_order=True)
         if prefer_asia:
             rows = final_subscription_nodes(rows, MAX_SUBSCRIPTION_TARGET)
+        else:
+            rows = sorted(rows, key=subscription_sort_key)
         selected: List[Dict[str, object]] = []
         selected_uris = set()
         seen_ips = set()
@@ -1684,15 +1682,9 @@ class NodeDatabase:
             row["premium_reason"] = reason
             row["premium_score"] = self._publish_score(row)
 
-        primary = [row for row in rows if (not prefer_asia or publish_region_rank(row) == 0)]
-        primary_uris = {str(row.get("uri") or "") for row in primary}
-        fallback = [row for row in rows if str(row.get("uri") or "") not in primary_uris]
-        fallback = sorted(fallback, key=subscription_sort_key)
         for bucket, reason, strict in (
-            (primary, "asia_low_latency" if prefer_asia else "low_latency", True),
-            (fallback, "fallback_low_latency" if prefer_asia else "global_low_latency", True),
-            (primary, "asia_relaxed" if prefer_asia else "relaxed", False),
-            (fallback, "fallback_relaxed" if prefer_asia else "global_relaxed", False),
+            (rows, "quality_low_latency", True),
+            (rows, "quality_relaxed", False),
         ):
             for row in bucket:
                 if len(selected) >= target:
@@ -1734,12 +1726,7 @@ class NodeDatabase:
         }
 
     def _publish_score(self, row: Dict[str, object]) -> float:
-        region_rank = publish_region_rank(row)
-        region_bonus = 3000.0 if region_rank == 0 else 2000.0 if region_rank == 1 else 1000.0 if region_rank == 2 else 0.0
-        latency = max(float(row.get("seconds") or 0), 0.05)
-        latency_score = max(0.0, 100.0 - latency * 12.0)
-        stability_score = min(int(row.get("validation_count") or 0), 10) * 4.0
-        return round(region_bonus + latency_score + stability_score, 2)
+        return subscription_quality_score(row)
 
     def _existing_publishable_premium_nodes(self) -> List[Dict[str, object]]:
         uri_rows = self.connection.execute(

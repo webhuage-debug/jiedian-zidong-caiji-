@@ -32,6 +32,7 @@ from auth import (
 )
 from app_config import CONFIG
 from app_time import beijing_date, beijing_now
+from app_version import APP_RELEASE_NAME, APP_VERSION
 from bot_service import TelegramBot
 from node_database import NodeDatabase
 from node_collector import DEFAULT_REPOS
@@ -993,6 +994,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             tasks = {name: task.status() for name, task in TASKS.items()}
             stats = database.stats()
             return {
+                "app": {"version": APP_VERSION, "release": APP_RELEASE_NAME},
                 "tasks": tasks,
                 "auto": control,
                 "control": control,
@@ -1008,6 +1010,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             stats = database.stats()
         return {
             "ok": True,
+            "app": {"version": APP_VERSION, "release": APP_RELEASE_NAME},
             "tasks": {name: status["running"] for name, status in tasks.items()},
             "control": control,
             "system_health": system_health_summary(stats, control, tasks),

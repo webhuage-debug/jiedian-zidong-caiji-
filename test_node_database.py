@@ -236,8 +236,8 @@ class NodeDatabaseTest(unittest.TestCase):
                 database.upsert_valid_node("vless://asia-fast@example.com:443", "ok", 0.1, "203.0.113.3", "SG")
                 rows = database.export_valid_nodes(3, prefer_asia=True)
                 self.assertEqual(rows[0]["uri"], "vless://asia-fast@example.com:443")
-                self.assertEqual(rows[1]["uri"], "vless://asia-slow@example.com:443")
-                self.assertEqual(rows[2]["uri"], "vless://global-fast@example.com:443")
+                self.assertEqual(rows[1]["uri"], "vless://global-fast@example.com:443")
+                self.assertEqual(rows[2]["uri"], "vless://asia-slow@example.com:443")
                 self.assertGreater(rows[0]["quality_score"], 0)
 
     def test_subscription_export_uses_premium_pool_default_target(self):

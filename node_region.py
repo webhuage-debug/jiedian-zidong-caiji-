@@ -89,11 +89,16 @@ def publish_region(row: Dict[str, object]) -> str:
     country_region = region_from_country(str(row.get("country") or ""))
     if country_region in ("primary_asia", "us", "filler_asia", "excluded"):
         return country_region
-    return region_from_text(str(row.get("uri") or ""))
+    return region_from_text(row_search_text(row))
 
 
 def is_publishable_region(row: Dict[str, object]) -> bool:
     return publish_region(row) in ("primary_asia", "us", "filler_asia")
+
+
+def is_collection_candidate(row: Dict[str, object]) -> bool:
+    """Return whether a newly collected node is worth entering the pending pool."""
+    return is_publishable_region(row)
 
 
 def publish_region_rank(row: Dict[str, object]) -> int:
@@ -108,8 +113,22 @@ def publish_region_rank(row: Dict[str, object]) -> int:
 
 
 def is_advertising_node(row: Dict[str, object]) -> bool:
-    text = searchable_text(str(row.get("uri") or "")).lower()
+    text = searchable_text(row_search_text(row)).lower()
     return any(keyword in text for keyword in AD_KEYWORDS)
+
+
+def row_search_text(row: Dict[str, object]) -> str:
+    parts = [
+        str(row.get("uri") or ""),
+        str(row.get("name") or ""),
+        str(row.get("remark") or ""),
+        str(row.get("tag") or ""),
+        str(row.get("server_name") or ""),
+        str(row.get("source") or ""),
+        str(row.get("repo") or ""),
+        str(row.get("encoding") or ""),
+    ]
+    return " ".join(part for part in parts if part)
 
 
 def region_from_country(country: str) -> str:

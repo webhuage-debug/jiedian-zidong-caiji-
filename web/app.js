@@ -7,6 +7,7 @@ const nodePageSize = 20;
 let moduleSnapshot = null;
 let moduleSnapshotAt = Date.now();
 const BASE_PATH = window.location.pathname.startsWith("/adminhuage") ? "/adminhuage" : "";
+const APP_TITLE_PREFIX = "\u534e\u54e5\u8282\u70b9\u603b\u63a7\u4eea\u8868\u76d8";
 let currentUser = null;
 let eventSource = null;
 let lastDatabaseSnapshot = null;
@@ -643,6 +644,10 @@ async function saveAutoConfig() {
 async function refreshStatus() {
   try {
     const data = await jsonFetch(api("/api/status"));
+    if (data.app?.version) {
+      $("pageTitle").textContent = `${APP_TITLE_PREFIX} ${data.app.version}`;
+      document.title = `${APP_TITLE_PREFIX} ${data.app.version}`;
+    }
     $("connectionDot").classList.add("online");
     $("connectionText").textContent = "本地服务在线";
     $("totalNodes").textContent = data.database.all_nodes ?? data.database.total_nodes;

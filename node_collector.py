@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from node_database import NodeDatabase
+from node_region import is_collection_candidate
 
 try:
     import yaml
@@ -199,19 +200,27 @@ class DatabaseNodeSink:
         self.logger = logger or CollectorLogger()
 
     def consume(self, findings: Iterable[Finding]) -> None:
-        nodes = [
-            (finding.value, finding.repo, finding.source, finding.encoding)
-            for finding in findings
-            if finding.kind == "node"
+        parsed_nodes = [finding for finding in findings if finding.kind == "node"]
+        kept_nodes = [
+            finding for finding in parsed_nodes
+            if is_collection_candidate({
+                "uri": finding.value,
+                "repo": finding.repo,
+                "source": finding.source,
+                "encoding": finding.encoding,
+            })
         ]
+        nodes = [(finding.value, finding.repo, finding.source, finding.encoding) for finding in kept_nodes]
         stats = self.database.upsert_nodes_with_stats(nodes)
-        if not stats["parsed"]:
+        rejected = len(parsed_nodes) - len(kept_nodes)
+        if not stats["parsed"] and not rejected:
             return
         self.logger.emit(
             "[入库] 解析 " + str(stats["parsed"]) + " | 新增 " + str(stats["inserted"])
-            + " | 重复 " + str(stats["duplicates"]) + " | 节点库 " + str(stats["total"]),
+            + " | 重复 " + str(stats["duplicates"]) + " | 前置过滤 " + str(rejected)
+            + " | 节点库 " + str(stats["total"]),
             0,
-            parsed_nodes_delta=stats["parsed"],
+            parsed_nodes_delta=len(parsed_nodes),
             inserted_nodes_delta=stats["inserted"],
             duplicate_nodes_delta=stats["duplicates"],
             database_total=stats["total"],
