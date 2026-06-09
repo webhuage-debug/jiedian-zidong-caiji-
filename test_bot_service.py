@@ -159,7 +159,7 @@ class TelegramBotTest(unittest.TestCase):
                 links = database.subscription_links()
                 self.assertEqual(len(links), 1)
                 self.assertEqual(links[0]["max_uses"], 3)
-                self.assertEqual(links[0]["export_limit"], 20)
+                self.assertEqual(links[0]["export_limit"], 50)
 
     def test_simulated_group_keyword_does_not_call_telegram_api(self):
         with tempfile.TemporaryDirectory() as directory:

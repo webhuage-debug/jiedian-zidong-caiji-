@@ -1,3 +1,5 @@
+import base64
+import json
 import unittest
 import tempfile
 import urllib.error
@@ -358,6 +360,68 @@ class WebAppRoutingTest(unittest.TestCase):
                     self.assertEqual(database.subscription_link("direct-token")["used_count"], 1)
             finally:
                 web_app.DATABASE = original_database
+
+    def test_subscription_output_applies_final_region_filter_to_all_targets(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "nodes.db"
+            with NodeDatabase(database_path) as database:
+                database.update_claim_code_config({"version": "v-filter", "enabled": True})
+                link = database.create_subscription_link(
+                    "filter-token",
+                    "filter",
+                    "usage",
+                    export_limit=30,
+                    claim_code_version="v-filter",
+                )
+                database.upsert_valid_node("vless://hk@example.com:443#Hong%20Kong", "ok", 0.2, "203.0.113.1", "HK")
+                database.upsert_valid_node("vless://us@example.com:443#Los%20Angeles", "ok", 0.1, "203.0.113.2", "US")
+                database.upsert_valid_node("vless://vn@example.com:443#Vietnam", "ok", 0.1, "203.0.113.3", "VN")
+                database.upsert_valid_node("vless://uk@example.com:443#London", "ok", 0.05, "203.0.113.4", "GB")
+                database.upsert_valid_node("vless://ru@example.com:443#Russia", "ok", 0.05, "203.0.113.5", "RU")
+                database.upsert_valid_node("vless://ad@example.com:443#Telegram%20Channel", "ok", 0.05, "203.0.113.6", "HK")
+                payload = base64.urlsafe_b64encode(
+                    json.dumps({"ps": "unknown vmess", "add": "example.com", "port": "443", "id": "id"}).encode("utf-8")
+                ).decode("ascii").rstrip("=")
+                database.upsert_valid_node("vmess://" + payload, "ok", 0.05, "203.0.113.7", "")
+
+                handler = object.__new__(DashboardHandler)
+                claim_config = database.claim_code_config()
+
+                raw = handler.subscription_output(database, link, claim_config, "raw")
+                self.assertEqual(raw["count"], 3)
+                self.assertIn("hk@example.com", raw["content"])
+                self.assertIn("us@example.com", raw["content"])
+                self.assertIn("vn@example.com", raw["content"])
+                self.assertNotIn("uk@example.com", raw["content"])
+                self.assertNotIn("ru@example.com", raw["content"])
+                self.assertNotIn("ad@example.com", raw["content"])
+
+                base64_result = handler.subscription_output(database, link, claim_config, "base64")
+                decoded = base64.b64decode(base64_result["content"]).decode("utf-8")
+                self.assertNotIn("uk@example.com", decoded)
+                self.assertNotIn("ru@example.com", decoded)
+                self.assertNotIn("ad@example.com", decoded)
+
+                captured = {}
+                original_convert = web_app.convert_with_sub_store
+                try:
+                    def fake_convert(config, target_id, content, timeout=25):
+                        captured["content"] = content
+                        return {
+                            "target": "V2RayNG",
+                            "content": content,
+                            "bytes": len(content.encode("utf-8")),
+                        }
+
+                    web_app.convert_with_sub_store = fake_convert
+                    converted = handler.subscription_output(database, link, claim_config, "v2rayng")
+                finally:
+                    web_app.convert_with_sub_store = original_convert
+
+                self.assertEqual(converted["count"], 3)
+                self.assertNotIn("uk@example.com", captured["content"])
+                self.assertNotIn("ru@example.com", captured["content"])
+                self.assertNotIn("ad@example.com", captured["content"])
 
     def test_bot_simulation_uses_local_logic_without_telegram(self):
         with tempfile.TemporaryDirectory() as directory:

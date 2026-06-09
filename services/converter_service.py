@@ -13,7 +13,7 @@ from typing import List
 
 
 SUB_STORE_PROJECT_URL = "https://github.com/sub-store-org/Sub-Store"
-SUBSCRIPTION_EXPORT_MAX = 20
+SUBSCRIPTION_EXPORT_MAX = 80
 SUB_STORE_TARGETS = {
     "v2rayng": {"name": "V2RayNG", "target": "V2Ray"},
     "clash-verge": {"name": "Clash Verge", "target": "ClashMeta"},

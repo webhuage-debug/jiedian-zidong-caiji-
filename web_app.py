@@ -38,6 +38,7 @@ from node_collector import DEFAULT_REPOS
 from node_processor import DEFAULT_RENAME_TEMPLATE, processed_nodes, subscription_base64
 from node_validator import resolve_xray_path
 from runtime_tasks import LogBus, ManagedTask
+from subscription_filter import DEFAULT_SUBSCRIPTION_TARGET, MAX_SUBSCRIPTION_TARGET, final_subscription_nodes, normalize_subscription_limit
 from services.acceptance_service import (
     acceptance_reports,
     build_acceptance_command,
@@ -1196,8 +1197,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def subscription_output(self, database: NodeDatabase, link: dict, claim_config: dict, target_id: str) -> dict:
         config = database.processing_config()
         template = link["rename_template"] or config["rename_template"]
-        limit = int(link.get("export_limit") or 20)
-        nodes = database.export_subscription_nodes(limit, True)
+        limit = normalize_subscription_limit(link.get("export_limit") or DEFAULT_SUBSCRIPTION_TARGET)
+        nodes = final_subscription_nodes(database.export_subscription_nodes(limit, True), limit)
         if target_id in ("base64", ""):
             result = subscription_base64(nodes, template)
             return {
@@ -1737,14 +1738,17 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 config["prefer_asia"] = payload.get("prefer_asia") is True or str(payload.get("prefer_asia")).lower() in ("1", "true", "yes", "on")
             if "export_limit" in payload:
                 try:
-                    config["export_limit"] = int_value(payload, "export_limit", int(config["export_limit"]), 1, 20)
+                    config["export_limit"] = int_value(payload, "export_limit", int(config["export_limit"]), 1, MAX_SUBSCRIPTION_TARGET)
                 except (TypeError, ValueError):
                     return self.send_json({"error": "导出数量必须是有效数字"}, HTTPStatus.BAD_REQUEST)
             if input_mode == "custom":
                 content = str(payload.get("content", "")).strip()
                 node_count = len([line for line in content.splitlines() if line.strip()])
             else:
-                nodes = database.export_subscription_nodes(int(config["export_limit"]), bool(config["prefer_asia"]))
+                nodes = final_subscription_nodes(
+                    database.export_subscription_nodes(int(config["export_limit"]), bool(config["prefer_asia"])),
+                    int(config["export_limit"]),
+                )
                 content = "\n".join(str(row["uri"]) for row in nodes)
                 node_count = len(nodes)
         input_bytes = len(content.encode("utf-8"))
@@ -1996,7 +2000,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         mode = str(payload.get("mode", "usage")).strip()
         template = str(payload.get("rename_template", "")).strip()
         remark = str(payload.get("remark", "")).strip()
-        export_limit = int_value(payload, "export_limit", 20, 1, 20)
+        export_limit = int_value(payload, "export_limit", DEFAULT_SUBSCRIPTION_TARGET, 1, MAX_SUBSCRIPTION_TARGET)
         max_uses = None
         expires_at = None
         if mode == "usage":

@@ -194,7 +194,7 @@ class NodeDatabaseTest(unittest.TestCase):
                     remark="unit",
                 )
                 self.assertEqual(link["used_count"], 0)
-                self.assertEqual(link["export_limit"], 20)
+                self.assertEqual(link["export_limit"], 30)
                 self.assertEqual(link["claim_code_version"], "v1")
                 self.assertTrue(link["enabled"])
                 database.touch_subscription_link("token123", "127.0.0.1")
@@ -240,12 +240,12 @@ class NodeDatabaseTest(unittest.TestCase):
                 self.assertEqual(rows[2]["uri"], "vless://global-fast@example.com:443")
                 self.assertGreater(rows[0]["quality_score"], 0)
 
-    def test_subscription_export_uses_premium_pool_top_twenty(self):
+    def test_subscription_export_uses_premium_pool_default_target(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "nodes.db"
             with NodeDatabase(path) as database:
                 nodes = []
-                for index in range(25):
+                for index in range(35):
                     uri = "vless://node" + str(index) + "@example.com:443"
                     nodes.append((uri, "owner/repo", "nodes.txt", "plain"))
                 slow_uri = "vless://slow@example.com:443"
@@ -262,10 +262,10 @@ class NodeDatabaseTest(unittest.TestCase):
                     )
                 database.record_validation(slow_uri, "有效", "slow", 5.0, "198.51.100.250", "US")
 
-                rows = database.export_subscription_nodes(100, prefer_asia=True)
-                self.assertEqual(len(rows), 20)
+                rows = database.export_subscription_nodes(30, prefer_asia=True)
+                self.assertEqual(len(rows), 30)
                 self.assertNotIn(slow_uri, [row["uri"] for row in rows])
-                self.assertEqual(database.stats()["premium_nodes"], 20)
+                self.assertEqual(database.stats()["premium_nodes"], 30)
 
     def test_subscription_pool_defaults_to_asia_then_us_and_excludes_other_regions(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -275,8 +275,11 @@ class NodeDatabaseTest(unittest.TestCase):
                     ("vless://jp-slower@example.com:443#Tokyo", 0.6, "203.0.113.10", "JP"),
                     ("vless://sg-dynamic@example.com:443#Singapore", 0.3, "203.0.113.11", ""),
                     ("vless://us-fast@example.com:443#Los%20Angeles", 0.1, "203.0.113.12", "US"),
+                    ("vless://vn-filler@example.com:443#Vietnam", 0.05, "203.0.113.16", "VN"),
                     ("vless://gb-fast@example.com:443#London", 0.05, "203.0.113.13", "GB"),
                     ("vless://za-fast@example.com:443#South%20Africa", 0.05, "203.0.113.14", "ZA"),
+                    ("vless://in-fast@example.com:443#India", 0.05, "203.0.113.17", "IN"),
+                    ("vless://tg-ad@example.com:443#Telegram%20Channel", 0.05, "203.0.113.18", "HK"),
                     ("vless://unknown-fast@example.com:443#unknown", 0.05, "203.0.113.15", ""),
                 ]
                 for uri, seconds, proxy_ip, country in samples:
@@ -290,10 +293,13 @@ class NodeDatabaseTest(unittest.TestCase):
                     "vless://jp-slower@example.com:443#Tokyo",
                 ])
                 self.assertIn("vless://us-fast@example.com:443#Los%20Angeles", uris)
+                self.assertIn("vless://vn-filler@example.com:443#Vietnam", uris)
                 self.assertNotIn("vless://gb-fast@example.com:443#London", uris)
                 self.assertNotIn("vless://za-fast@example.com:443#South%20Africa", uris)
+                self.assertNotIn("vless://in-fast@example.com:443#India", uris)
+                self.assertNotIn("vless://tg-ad@example.com:443#Telegram%20Channel", uris)
                 self.assertNotIn("vless://unknown-fast@example.com:443#unknown", uris)
-                self.assertEqual(database.valid_node_count(), 6)
+                self.assertEqual(database.valid_node_count(), 9)
 
     def test_subscription_export_reuses_fresh_premium_pool(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -395,7 +401,7 @@ class NodeDatabaseTest(unittest.TestCase):
                 defaults = database.subscription_converter_config()
                 self.assertEqual(defaults["backend_url"], "http://127.0.0.1:3001")
                 self.assertEqual(defaults["profile_name"], "sub")
-                self.assertEqual(defaults["export_limit"], 20)
+                self.assertEqual(defaults["export_limit"], 30)
                 self.assertTrue(defaults["prefer_asia"])
 
                 config = database.update_subscription_converter_config({
@@ -406,7 +412,7 @@ class NodeDatabaseTest(unittest.TestCase):
                 })
                 self.assertEqual(config["backend_url"], "http://sub-store:3001/")
                 self.assertEqual(config["profile_name"], "mobile")
-                self.assertEqual(config["export_limit"], 20)
+                self.assertEqual(config["export_limit"], 80)
                 self.assertFalse(config["prefer_asia"])
                 database.record_subscription_converter_log(
                     "surge",
@@ -589,5 +595,5 @@ class NodeDatabaseTest(unittest.TestCase):
                 self.assertEqual(auto["valid_low_watermark"], 1000)
                 self.assertEqual(auto["collect_insert_target"], 20000)
                 self.assertEqual(auto["validate_valid_target"], 200)
-                self.assertEqual(converter["export_limit"], 20)
-                self.assertEqual(bot["subscription_export_limit"], 20)
+                self.assertEqual(converter["export_limit"], 80)
+                self.assertEqual(bot["subscription_export_limit"], 80)
