@@ -68,6 +68,31 @@ h2 { font-size: 20px; letter-spacing: 0; }
 .stat-card small { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; }
 
 /* Cockpit gauges */
+.dashboard-summary { margin-bottom: 16px; }
+.dashboard-kpi-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.dashboard-kpi-grid article {
+  min-width: 0;
+  border: 1px solid #d8e5ed;
+  border-left: 4px solid var(--accent);
+  border-radius: 8px;
+  padding: 12px;
+  background: linear-gradient(180deg, #ffffff 0%, #f7fbfc 100%);
+}
+.dashboard-kpi-grid span,
+.dashboard-kpi-grid small,
+.dashboard-status-grid small { display: block; overflow: hidden; color: var(--muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.dashboard-kpi-grid strong { display: block; margin-top: 5px; color: var(--text); font-size: 30px; font-variant-numeric: tabular-nums; letter-spacing: 0; }
+.dashboard-status-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-top: 12px; }
+.dashboard-status-grid article {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 11px 12px;
+  background: var(--surface-3);
+}
+.dashboard-status-grid strong { display: inline-block; max-width: calc(100% - 24px); overflow: hidden; color: var(--text); font-size: 16px; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; }
+.dashboard-actions { margin-top: 14px; }
+.cockpit-panel, .ops-trend-panel { display: none; }
 .gauge-meter {
   --gauge-deg: 0deg;
   --gauge-color: var(--accent);
@@ -418,6 +443,7 @@ dialog::backdrop { background: rgba(15, 23, 42, .32); backdrop-filter: blur(4px)
   .cockpit-gauges { grid-template-columns: 1fr; }
   .cockpit-gauge.primary { order: -1; }
   .cockpit-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .dashboard-kpi-grid, .dashboard-status-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 980px) {
   .topbar, main { width: min(100% - 32px, 1360px); margin-left: auto; margin-right: auto; }
@@ -437,8 +463,8 @@ dialog::backdrop { background: rgba(15, 23, 42, .32); backdrop-filter: blur(4px)
   .nodes-panel { min-height: auto; }
   .compact-node { grid-template-columns: 1fr; }
   .pipeline-map, .page-tabs:not(.ops-tabs), .trend-summary, .trend-chart { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .auto-status-grid, .auto-progress-grid, .variable-grid, .module-meter-grid, .module-flow, .quality-funnel { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .auto-status-grid, .auto-progress-grid, .variable-grid, .module-meter-grid, .module-flow, .quality-funnel, .dashboard-kpi-grid, .dashboard-status-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
-@media (max-width: 680px) { .topbar { align-items: flex-start; flex-direction: column; } .top-actions { justify-content: flex-start; } .panel-heading { align-items: flex-start; flex-direction: column; } .compact-filter { justify-content: flex-start; width: 100%; } .compact-filter select { flex: 1 1 140px; } .stats-grid, .pipeline-map, .page-tabs:not(.ops-tabs), .trend-summary, .trend-chart { grid-template-columns: repeat(2, 1fr); } .form-grid, .form-grid.three, .form-grid.four, .form-grid.five, .auto-status-grid, .auto-progress-grid, .variable-grid, .module-meter-grid, .module-flow, .quality-funnel { grid-template-columns: 1fr 1fr; } }
-@media (max-width: 520px) { .stats-grid, .trend-summary, .trend-chart, .module-meter-grid, .module-flow, .quality-funnel, .subscription-main-link { grid-template-columns: 1fr; } }
+@media (max-width: 680px) { .topbar { align-items: flex-start; flex-direction: column; } .top-actions { justify-content: flex-start; } .panel-heading { align-items: flex-start; flex-direction: column; } .compact-filter { justify-content: flex-start; width: 100%; } .compact-filter select { flex: 1 1 140px; } .stats-grid, .pipeline-map, .page-tabs:not(.ops-tabs), .trend-summary, .trend-chart { grid-template-columns: repeat(2, 1fr); } .form-grid, .form-grid.three, .form-grid.four, .form-grid.five, .auto-status-grid, .auto-progress-grid, .variable-grid, .module-meter-grid, .module-flow, .quality-funnel, .dashboard-kpi-grid, .dashboard-status-grid { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 520px) { .stats-grid, .trend-summary, .trend-chart, .module-meter-grid, .module-flow, .quality-funnel, .subscription-main-link, .dashboard-kpi-grid, .dashboard-status-grid { grid-template-columns: 1fr; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition-duration: .01ms !important; } }

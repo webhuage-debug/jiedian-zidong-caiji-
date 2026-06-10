@@ -211,6 +211,37 @@ function updateCockpit(data, auto, collectorRunning, validatorRunning) {
   return metrics;
 }
 
+function updateDashboardSummary(data, auto, collectorRunning, validatorRunning, botRunning) {
+  const database = data.database || {};
+  const app = data.app || {};
+  const total = Number(database.all_nodes ?? database.total_nodes ?? 0);
+  const pending = Number(database.pending_nodes ?? database.statuses?.["未验证"] ?? 0);
+  const valid = Number(database.valid_nodes || 0);
+  const premium = Number(database.premium_nodes || 0);
+  const invalid = Number(database.invalid_nodes_total || database.invalid_nodes || 0);
+  const exportLimit = Number($("subscriptionExportLimit")?.value || 30);
+  const output = Math.min(exportLimit || 30, premium || valid);
+  setText("dashVersion", app.version ? `当前 ${app.version}` : "版本未知");
+  setText("dashTotalNodes", total.toLocaleString());
+  setText("dashPendingNodes", pending.toLocaleString());
+  setText("dashValidNodes", valid.toLocaleString());
+  setText("dashPremiumNodes", premium.toLocaleString());
+  setText("dashOutputNodes", output.toLocaleString());
+  setText("dashInvalidNodes", invalid.toLocaleString());
+  setText("dashSummaryText", `有效 ${valid.toLocaleString()}，优质池 ${premium.toLocaleString()}，预计订阅输出 ${output.toLocaleString()}。`);
+  setText("dashAutoState", auto.enabled ? "自动控制开启" : "自动控制关闭");
+  setText("dashAutoReason", auto.last_reason || "等待状态同步");
+  setText("dashCollectorState", collectorRunning ? "采集中" : "采集停止");
+  setText("dashCollectorHint", collectorRunning ? (data.tasks?.collector?.progress?.current_repo || "正在采集") : "等待采集指令");
+  setText("dashValidatorState", validatorRunning ? "验证中" : "验证停止");
+  setText("dashValidatorHint", validatorRunning ? "正在检测节点可用性" : "等待验证指令");
+  setText("dashBotState", botRunning ? "BOT 运行中" : "BOT 停止");
+  setLight("dashAutoLight", !!auto.enabled);
+  setLight("dashCollectorLight", collectorRunning);
+  setLight("dashValidatorLight", validatorRunning);
+  setLight("dashBotLight", botRunning);
+}
+
 function setGroupedPage(button) {
   document.querySelectorAll(".ops-tabs .page-tab").forEach((tab) => tab.classList.remove("active"));
   document.querySelectorAll(".page").forEach((pageElement) => pageElement.classList.remove("active"));
@@ -659,6 +690,7 @@ async function refreshStatus() {
     const collectorRunning = data.tasks.collector.running;
     const validatorRunning = data.tasks.validator.running;
     const botRunning = data.tasks.bot?.running || false;
+    updateDashboardSummary(data, data.control || data.auto || {}, collectorRunning, validatorRunning, botRunning);
     taskBadge("collectorBadge", collectorRunning);
     taskBadge("validatorBadge", validatorRunning);
     taskBadge("botBadge", botRunning);
@@ -1326,6 +1358,7 @@ function renderMaintenance(overview = {}) {
   const conversionCache = overview.conversion_cache || {};
   $("conversionCacheRows").textContent = Number(conversionCache.rows || 0).toLocaleString();
   $("conversionCacheHits").textContent = Number(conversionCache.hits || 0).toLocaleString();
+  setText("dashConversionCache", Number(conversionCache.rows || 0).toLocaleString());
   setText("converterMetricCache", Number(conversionCache.hits || 0).toLocaleString());
   const counts = overview.table_counts || {};
   $("maintenanceTableCounts").innerHTML = Object.keys(counts).length ? Object.entries(counts).map(([name, count]) => `
@@ -1641,6 +1674,8 @@ function renderSubscriptions(items) {
     || "-";
   setText("subscriptionMetricLinks", String(items.length));
   setText("subscriptionMetricEnabled", `启用 ${enabledCount}`);
+  setText("dashSubscriptionLinks", String(items.length));
+  setText("dashSubscriptionEnabled", `启用 ${enabledCount}`);
   setText("subscriptionMetricLimit", $("subscriptionExportLimit")?.value || "20");
   setText("subscriptionMetricClaimVersion", currentClaimVersion);
   $("subscriptionList").innerHTML = items.length ? items.map((item) => {
@@ -1946,6 +1981,14 @@ $("recheckValidNodes").onclick = () => post(api("/api/validator/recheck-valid"),
   rounds: $("validatorRounds").value,
   timeout: $("validatorTimeout").value,
 });
+$("dashStartCollector").onclick = () => $("startCollector").click();
+$("dashStartValidator").onclick = () => $("startValidator").click();
+$("dashRecheckValid").onclick = () => $("recheckValidNodes").click();
+$("dashClearConversionCache").onclick = () => $("clearConversionCache").click();
+$("dashStopTasks").onclick = async () => {
+  await post(api("/api/collector/stop"));
+  await post(api("/api/validator/stop"));
+};
 $("saveAutoConfig").onclick = () => saveAutoConfig().catch((error) => toast(error.message));
 $("startAuto").onclick = async () => {
   await post(api("/api/auto/start"), autoPayload());

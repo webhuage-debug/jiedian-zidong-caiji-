@@ -39,6 +39,40 @@
   </dialog>
 
   <main>
+    <section class="panel dashboard-summary dashboard-only" aria-label="dashboard summary">
+      <div class="panel-heading">
+        <div>
+          <p class="panel-kicker">OVERVIEW</p>
+          <h2>节点库总览</h2>
+          <p class="hint" id="dashSummaryText">正在读取节点池、优质池和订阅状态。</p>
+        </div>
+        <span class="badge" id="dashVersion">版本同步中</span>
+      </div>
+      <div class="dashboard-kpi-grid">
+        <article><span>节点库总数</span><strong id="dashTotalNodes">0</strong><small>采集入库总量</small></article>
+        <article><span>待验证节点</span><strong id="dashPendingNodes">0</strong><small>等待 Xray 检测</small></article>
+        <article><span>有效节点</span><strong id="dashValidNodes">0</strong><small>验证通过库存</small></article>
+        <article><span>优质订阅池</span><strong id="dashPremiumNodes">0</strong><small>粉丝订阅候选</small></article>
+        <article><span>预计输出</span><strong id="dashOutputNodes">0</strong><small>按当前导出上限估算</small></article>
+        <article><span>无效/剔除</span><strong id="dashInvalidNodes">0</strong><small>累计失败记录</small></article>
+        <article><span>订阅链接</span><strong id="dashSubscriptionLinks">0</strong><small id="dashSubscriptionEnabled">启用 0</small></article>
+        <article><span>转换缓存</span><strong id="dashConversionCache">0</strong><small>Sub-Store 缓存条数</small></article>
+      </div>
+      <div class="dashboard-status-grid">
+        <article><span class="status-light" id="dashAutoLight"></span><strong id="dashAutoState">自动控制</strong><small id="dashAutoReason">等待同步</small></article>
+        <article><span class="status-light" id="dashCollectorLight"></span><strong id="dashCollectorState">采集状态</strong><small id="dashCollectorHint">等待同步</small></article>
+        <article><span class="status-light" id="dashValidatorLight"></span><strong id="dashValidatorState">验证状态</strong><small id="dashValidatorHint">等待同步</small></article>
+        <article><span class="status-light" id="dashBotLight"></span><strong id="dashBotState">BOT 状态</strong><small>领取流程状态</small></article>
+      </div>
+      <div class="actions dashboard-actions">
+        <button class="primary" id="dashStartCollector">启动采集</button>
+        <button class="ghost" id="dashStartValidator">验证节点</button>
+        <button class="ghost" id="dashRecheckValid">复检有效节点</button>
+        <button class="ghost" id="dashClearConversionCache">清空转换缓存</button>
+        <button class="danger" id="dashStopTasks">停止任务</button>
+      </div>
+    </section>
+
     <section class="auto-console panel dashboard-only" aria-label="全自动控制台">
       <div class="panel-heading">
         <div>
@@ -65,7 +99,7 @@
         <div><span>本轮采集新增</span><strong id="autoCollectProgress">0 / 0</strong></div>
         <div><span>本轮验证新增有效</span><strong id="autoValidateProgress">0 / 0</strong></div>
       </div>
-      <details class="auto-params" open>
+      <details class="auto-params">
         <summary>自动控制参数区（点击可收起）</summary>
         <h3>巡检策略</h3>
         <div class="form-grid three">
