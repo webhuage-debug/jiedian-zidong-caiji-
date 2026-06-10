@@ -4,7 +4,7 @@ from unittest.mock import Mock, patch
 from pathlib import Path
 from types import SimpleNamespace
 
-from runtime_tasks import LogBus, kill_process, normalize_task_output, task_environment, terminate_process
+from runtime_tasks import LogBus, kill_process, normalize_task_output, task_environment, task_output_level, terminate_process
 
 
 class RuntimeTasksTest(unittest.TestCase):
@@ -20,6 +20,10 @@ class RuntimeTasksTest(unittest.TestCase):
             kill_process(process)
         process.terminate.assert_called_once()
         process.kill.assert_called_once()
+
+    def test_task_output_level_treats_invalid_nodes_as_warning(self):
+        self.assertEqual(task_output_level("[1/10] 无效 curl: (28) Operation timed out"), "warning")
+        self.assertEqual(task_output_level("未找到 Xray 可执行文件"), "error")
 
     def test_normalizes_scrapling_timeout_messages_to_chinese(self):
         message = (

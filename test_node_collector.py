@@ -14,7 +14,10 @@ from node_collector import (
     page_links,
     proxy_uri,
     resolve_subscriptions,
+    safe_node_ref,
     should_download,
+    should_follow_tree,
+    should_parse_file_content,
 )
 
 
@@ -74,7 +77,27 @@ class ExtractFindingsTest(unittest.TestCase):
         self.assertTrue(should_download("subscriptions/all.txt", 100, 1000))
         self.assertTrue(should_download("nodes", None, 1000))
         self.assertFalse(should_download("image.png", 100, 1000))
+        self.assertFalse(should_download("public/assets/app.js", 100, 1000))
+        self.assertFalse(should_download("src/settings/index.json", 100, 1000))
+        self.assertTrue(should_download("src/subscriptions/nodes.txt", 100, 1000))
         self.assertFalse(should_download("all.txt", 1001, 1000))
+
+    def test_low_value_tree_filter_counts_skipped_directories(self):
+        class Logger:
+            def __init__(self):
+                self.fields = []
+
+            def emit(self, message, verbosity=0, **fields):
+                self.fields.append(fields)
+
+        logger = Logger()
+        self.assertFalse(should_follow_tree("owner/repo", "https://github.com/owner/repo/tree/main/public/assets", 3, logger))
+        self.assertTrue(should_follow_tree("owner/repo", "https://github.com/owner/repo/tree/main/src/subscriptions", 3, logger))
+        self.assertEqual(logger.fields[0]["skipped_dirs_delta"], 1)
+
+    def test_readme_content_is_only_parsed_when_it_contains_node_links(self):
+        self.assertFalse(should_parse_file_content("README.md", "project docs only"))
+        self.assertTrue(should_parse_file_content("README.md", "demo vless://uuid@example.com:443#HK"))
 
     def test_html_links_are_resolved_without_api(self):
         links = page_links('<a href="/owner/repo/tree/main/sub">sub</a>', "https://github.com/owner/repo")
@@ -113,7 +136,7 @@ class ExtractFindingsTest(unittest.TestCase):
                 self.assertEqual(database.count("节点库"), 1)
                 self.assertEqual(database.stats()["duplicate_filtered"], 1)
 
-    def test_collection_sink_filters_unknown_and_ad_nodes_before_database(self):
+    def test_collection_sink_keeps_unknown_but_filters_ad_nodes_before_database(self):
         with tempfile.TemporaryDirectory() as directory:
             exporter = DatabaseNodeSink(Path(directory) / "nodes.db")
             exporter.consume([
@@ -123,9 +146,17 @@ class ExtractFindingsTest(unittest.TestCase):
             ])
             exporter.close()
             with NodeDatabase(Path(directory) / "nodes.db") as database:
-                self.assertEqual(database.count("节点库"), 1)
+                self.assertEqual(database.count("节点库"), 2)
                 rows = list(database.iter_nodes(revalidate=True))
-                self.assertEqual(rows, ["vless://hk@example.com:443#Hong%20Kong"])
+                self.assertEqual(set(rows), {
+                    "vless://hk@example.com:443#Hong%20Kong",
+                    "vless://unknown@example.com:443#unknown",
+                })
+
+    def test_safe_node_ref_does_not_expose_full_link(self):
+        value = safe_node_ref("vless://uuid@example.com:443?security=tls#Hong%20Kong")
+        self.assertIn("vless://***@example.com:443#hash_", value)
+        self.assertNotIn("uuid", value)
 
     def test_converts_structured_mihomo_yaml_node(self):
         findings = extract_findings(

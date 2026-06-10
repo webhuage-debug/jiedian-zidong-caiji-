@@ -68,6 +68,7 @@ EXCLUDED_KEYWORDS = {
     "south asia", "pakistan", "bangladesh", "sri lanka", "nepal",
     "unknown", "\u672a\u77e5", "\u672a\u8bc6\u522b",
 }
+UNKNOWN_ONLY_KEYWORDS = {"unknown", "\u672a\u77e5", "\u672a\u8bc6\u522b"}
 
 AD_KEYWORDS = {
     "telegram", " t.me/", "https://t.me", "http://t.me", "tg channel", "channel",
@@ -98,7 +99,16 @@ def is_publishable_region(row: Dict[str, object]) -> bool:
 
 def is_collection_candidate(row: Dict[str, object]) -> bool:
     """Return whether a newly collected node is worth entering the pending pool."""
-    return is_publishable_region(row)
+    if is_advertising_node(row):
+        return False
+    if region_from_country(str(row.get("country") or "")) == "excluded":
+        return False
+    text = searchable_text(row_search_text(row))
+    if region_from_codes(text) == "excluded":
+        return False
+    lower = text.lower()
+    excluded_for_collection = EXCLUDED_KEYWORDS - UNKNOWN_ONLY_KEYWORDS
+    return not any(keyword in lower for keyword in excluded_for_collection)
 
 
 def publish_region_rank(row: Dict[str, object]) -> int:

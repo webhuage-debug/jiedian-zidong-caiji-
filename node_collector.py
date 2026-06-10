@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
 import ipaddress
 import json
 import random
@@ -72,14 +73,20 @@ LIKELY_NAMES = (
     "hysteria", "tuic", "wireguard", "protocol",
 )
 HIGH_VALUE_PATHS = (
-    "subscriptions", "subscription", "protocols", "protocol", "base64", "files",
-    "vless", "vmess", "shadowsocks", "trojan", "hy2", "hysteria", "tuic", "wireguard",
+    "sub", "subs", "subscriptions", "subscription", "protocols", "protocol", "base64", "raw",
+    "clash", "singbox", "sing-box", "surge", "proxy", "proxies",
+    "v2ray", "xray", "vless", "vmess", "shadowsocks", "trojan", "ssr", "hy2",
+    "hysteria", "tuic", "wireguard",
 )
 LOW_VALUE_PATHS = (
     "/.github/", "/.git/", "/node_modules/", "/vendor/", "/dist/", "/build/",
     "/docs/", "/doc/", "/website/", "/site/", "/test/", "/tests/", "/script/", "/scripts/",
+    "/assets/", "/asset/", "/images/", "/image/", "/icons/", "/icon/", "/textures/", "/texture/",
+    "/css/", "/js/", "/pages/", "/public/assets/", "/src/settings/", "/src/contents/", "/src/utils/",
 )
 LOW_VALUE_FILES = ("license", "changelog", "contributing", "code_of_conduct", ".lock")
+DEFAULT_MAX_TREE_DEPTH = 3
+README_NODE_HINTS = ("vmess://", "vless://", "trojan://", "ss://", "ssr://")
 TRAILING_PUNCTUATION = ".,;:!?)]}"
 BLOCKED_HOSTS = {"localhost", "localhost.localdomain"}
 LOG_LEVELS = {"compact": 0, "detail": 1, "nodes": 2}
@@ -127,11 +134,45 @@ class CollectorLogger:
     def __init__(self, level: str = "detail"):
         self.level = LOG_LEVELS[level]
         self.lock = threading.Lock()
+        self.started_at = time.monotonic()
+        self.counters: Dict[str, int] = {
+            "repositories": 0,
+            "directory_pages": 0,
+            "candidate_files": 0,
+            "fetched_files": 0,
+            "skipped_dirs": 0,
+            "parsed_nodes": 0,
+            "inserted_nodes": 0,
+            "duplicate_nodes": 0,
+            "region_rejected": 0,
+            "failed_requests": 0,
+            "no_node_files": 0,
+        }
 
     def emit(self, message: str, verbosity: int = 0, **fields) -> None:
+        for key in list(self.counters):
+            delta = fields.get(key + "_delta")
+            if delta:
+                self.counters[key] += int(delta)
         payload = {"message": message, "visible": self.level >= verbosity, **fields}
         with self.lock:
             print("@event " + json.dumps(payload, ensure_ascii=False), file=sys.stderr, flush=True)
+
+    def emit_summary(self, failed_sources: int) -> None:
+        elapsed = time.monotonic() - self.started_at
+        self.emit(
+            "[采集汇总] repos={repositories} dirs={directory_pages} raw_files={fetched_files} "
+            "skipped_dirs={skipped_dirs} candidate_files={candidate_files} parsed={parsed_nodes} "
+            "inserted={inserted_nodes} duplicates={duplicate_nodes} region_rejected={region_rejected} "
+            "failed_sources={failed_sources} elapsed={elapsed:.1f}s".format(
+                failed_sources=failed_sources,
+                elapsed=elapsed,
+                **self.counters,
+            ),
+            0,
+            collection_summary=True,
+            elapsed_seconds=round(elapsed, 1),
+        )
 
 
 class ScraplingClient:
@@ -223,6 +264,7 @@ class DatabaseNodeSink:
             parsed_nodes_delta=len(parsed_nodes),
             inserted_nodes_delta=stats["inserted"],
             duplicate_nodes_delta=stats["duplicates"],
+            region_rejected_delta=rejected,
             database_total=stats["total"],
         )
         inserted = set(stats["inserted_uris"])
@@ -230,7 +272,7 @@ class DatabaseNodeSink:
             seen: Set[str] = set()
             for uri, _, _, _ in nodes:
                 status = "新增入库" if uri in inserted and uri not in seen else "重复过滤"
-                self.logger.emit("[节点] " + status + " | " + uri, 2)
+                self.logger.emit("[节点] " + status + " | " + safe_node_ref(uri), 2)
                 seen.add(uri)
 
     def close(self) -> None:
@@ -245,6 +287,15 @@ class DatabaseNodeSink:
 
 def trim_value(value: str) -> str:
     return value.rstrip(TRAILING_PUNCTUATION)
+
+
+def safe_node_ref(node: str) -> str:
+    parsed = urllib.parse.urlsplit(node)
+    scheme = (parsed.scheme or node.split("://", 1)[0]).lower()
+    digest = hashlib.sha256(node.encode("utf-8", errors="replace")).hexdigest()[:8]
+    if parsed.hostname and parsed.port:
+        return scheme + "://***@" + parsed.hostname + ":" + str(parsed.port) + "#hash_" + digest
+    return scheme + "://***#hash_" + digest
 
 
 def classify_url(url: str, context: str) -> Tuple[str, int]:
@@ -447,7 +498,7 @@ def should_download(path: str, size: Optional[int], max_bytes: int) -> bool:
     lowered = "/" + path.lower()
     if size is not None and (size <= 0 or size > max_bytes):
         return False
-    if any(part in lowered for part in LOW_VALUE_PATHS):
+    if is_low_value_path(path):
         return False
     suffix = Path(path).suffix.lower()
     name = Path(path).name.lower()
@@ -456,14 +507,33 @@ def should_download(path: str, size: Optional[int], max_bytes: int) -> bool:
     return suffix in TEXT_SUFFIXES or any(hint in lowered for hint in LIKELY_NAMES)
 
 
+def is_high_value_path(path: str) -> bool:
+    lowered = path.lower()
+    return any(hint in lowered for hint in HIGH_VALUE_PATHS)
+
+
+def is_low_value_path(path: str) -> bool:
+    normalized = "/" + path.strip("/").lower() + "/"
+    if "/src/" in normalized and is_high_value_path(path):
+        return False
+    return any(part in normalized for part in LOW_VALUE_PATHS)
+
+
+def should_parse_file_content(path: str, text: str) -> bool:
+    if Path(path).name.lower().startswith("readme"):
+        lowered = text.lower()
+        return any(hint in lowered for hint in README_NODE_HINTS)
+    return True
+
+
 def should_follow_tree(repo: str, tree_url: str, max_depth: int, logger: CollectorLogger) -> bool:
-    lowered = "/" + tree_url.lower()
-    if any(part in lowered for part in LOW_VALUE_PATHS):
-        logger.emit("[跳过] 低价值目录 | " + tree_url, 1)
+    path = tree_path(repo, tree_url)
+    if is_low_value_path(path):
+        logger.emit("[跳过] 低价值目录 | " + tree_url, 1, skipped_dirs_delta=1)
         return False
     depth = tree_depth(repo, tree_url)
     if depth > max_depth:
-        logger.emit("[跳过] 目录深度超过限制 " + str(max_depth) + " | " + tree_url, 1)
+        logger.emit("[跳过] 目录深度超过限制 " + str(max_depth) + " | " + tree_url, 1, skipped_dirs_delta=1)
         return False
     return True
 
@@ -586,7 +656,7 @@ def discover_blob_urls(
     client: ScraplingClient,
     repo: str,
     max_pages: int,
-    max_depth: int = 8,
+    max_depth: int = DEFAULT_MAX_TREE_DEPTH,
     logger: Optional[CollectorLogger] = None,
 ) -> List[Finding]:
     logger = logger or CollectorLogger()
@@ -687,14 +757,21 @@ def path_score(path: str) -> int:
 
 
 def tree_depth(repo: str, tree_url: str) -> int:
+    path = tree_path(repo, tree_url)
+    if not path:
+        return 0
+    return len([part for part in path.split("/") if part])
+
+
+def tree_path(repo: str, tree_url: str) -> str:
     marker = "https://github.com/" + repo + "/tree/"
     if not tree_url.startswith(marker):
-        return 0
+        return ""
     remainder = tree_url[len(marker):]
     parts = remainder.split("/", 1)
     if len(parts) == 1:
-        return 0
-    return len([part for part in parts[1].split("/") if part])
+        return ""
+    return parts[1]
 
 
 def crawl_repo(
@@ -703,7 +780,7 @@ def crawl_repo(
     max_files: int,
     max_bytes: int,
     max_pages: int,
-    max_depth: int = 8,
+    max_depth: int = DEFAULT_MAX_TREE_DEPTH,
     workers: int = 5,
     on_findings: Optional[Callable[[Iterable[Finding]], None]] = None,
     logger: Optional[CollectorLogger] = None,
@@ -746,6 +823,9 @@ def crawl_repo(
             if len(text.encode("utf-8")) > max_bytes:
                 logger.emit("[跳过] 文件超过大小限制 | " + repo + "/" + path, 0)
                 return path, [], False, 0
+            if not should_parse_file_content(path, text):
+                logger.emit("[跳过] README 未包含节点协议 | " + repo + "/" + path, 1, no_node_files_delta=1)
+                return path, [], True, 0
             extracted = extract_findings(text, repo, path)
             nodes = sum(item.kind == "node" for item in extracted)
             logger.emit(
@@ -783,7 +863,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument("--database", type=Path, default=Path("data/nodes.db"), help="SQLite database path")
     parser.add_argument("--max-files", type=int, default=400, help="maximum candidate files per repository")
     parser.add_argument("--max-pages", type=int, default=500, help="maximum GitHub directory pages per repository")
-    parser.add_argument("--max-depth", type=int, default=8, help="maximum GitHub directory depth to follow")
+    parser.add_argument("--max-depth", type=int, default=DEFAULT_MAX_TREE_DEPTH, help="maximum GitHub directory depth to follow; capped at 3 by default")
     parser.add_argument("--max-bytes", type=int, default=4 * 1024 * 1024, help="maximum bytes per file")
     parser.add_argument("--max-subscriptions", type=int, default=500, help="maximum subscription URLs to resolve")
     parser.add_argument("--subscription-depth", type=int, default=2, help="maximum nested subscription link depth")
@@ -819,9 +899,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     sink = DatabaseNodeSink(args.database, logger)
     all_findings: List[Finding] = []
     failed = 0
+    effective_depth = min(args.max_depth, DEFAULT_MAX_TREE_DEPTH)
+    if effective_depth != args.max_depth:
+        logger.emit("[限制] GitHub 目录深度安全上限 " + str(effective_depth) + "，已忽略配置值 " + str(args.max_depth), 0)
     try:
         for repo in load_repos(args):
-            logger.emit("[仓库] 开始扫描 | " + repo, 0, current_repo=repo)
+            logger.emit("[仓库] 开始扫描 | " + repo, 0, current_repo=repo, repositories_delta=1)
             try:
                 profiles = sink.source_profiles(repo)
                 if profiles:
@@ -833,7 +916,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                         args.max_files,
                         args.max_bytes,
                         args.max_pages,
-                        args.max_depth,
+                        effective_depth,
                         args.workers,
                         sink.consume,
                         logger,
@@ -858,6 +941,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 )
             )
     finally:
+        logger.emit_summary(failed)
         sink.close()
     findings = deduplicate(all_findings)
     print(json.dumps({

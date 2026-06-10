@@ -105,14 +105,17 @@ class ManagedTask:
             "current_repo": "",
             "current_url": "",
             "active_requests": 0,
+            "repositories": 0,
             "directory_pages": 0,
             "candidate_files": 0,
             "fetched_files": 0,
             "no_node_files": 0,
+            "skipped_dirs": 0,
             "failed_requests": 0,
             "parsed_nodes": 0,
             "inserted_nodes": 0,
             "duplicate_nodes": 0,
+            "region_rejected": 0,
             "database_total": 0,
         }
 
@@ -193,7 +196,7 @@ class ManagedTask:
                     message = normalize_task_output(message)
                     if not message:
                         continue
-                    level = "error" if "error" in message.lower() or "失败" in message or "无效" in message else "info"
+                    level = task_output_level(message)
                     self.log_bus.emit(self.name, message, level)
         code = process.wait()
         with self.lock:
@@ -215,8 +218,9 @@ class ManagedTask:
                 if key in event:
                     self.progress[key] = event[key]
             for key in (
-                "directory_pages", "candidate_files", "fetched_files", "failed_requests",
-                "parsed_nodes", "inserted_nodes", "duplicate_nodes", "no_node_files",
+                "repositories", "directory_pages", "candidate_files", "fetched_files", "failed_requests",
+                "parsed_nodes", "inserted_nodes", "duplicate_nodes", "region_rejected",
+                "skipped_dirs", "no_node_files",
             ):
                 delta = event.get(key + "_delta")
                 if delta:
@@ -224,7 +228,7 @@ class ManagedTask:
         if not event.get("visible", True):
             return
         message = event.get("message", raw)
-        level = "error" if "[失败]" in message else "warning" if "[跳过]" in message else "info"
+        level = task_output_level(message)
         self.log_bus.emit(self.name, message, level)
 
 
@@ -264,6 +268,40 @@ def summarize_network_error(message: str) -> str:
     if "Failed to perform" in message:
         return "请求执行失败"
     return message
+
+
+def task_output_level(message: str) -> str:
+    lowered = message.lower()
+    hard_errors = (
+        "traceback",
+        "exception",
+        "filenotfounderror",
+        "database is locked",
+        "no such table",
+        "xray 可执行文件",
+        "未找到 xray",
+        "geoip.dat",
+        "geosite.dat",
+        "无法启动",
+        "写库失败",
+    )
+    if any(item in lowered for item in hard_errors):
+        return "error"
+    soft_failures = (
+        "无效",
+        "timeout",
+        "timed out",
+        "tls",
+        "connection reset",
+        "recv failure",
+        "curl:",
+        "[失败]",
+        "[跳过]",
+        "验证汇总",
+    )
+    if any(item in lowered for item in soft_failures):
+        return "warning"
+    return "info"
 
 
 def normalize_task_output(message: str) -> Optional[str]:

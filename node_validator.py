@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
 import json
 import random
 import re
@@ -25,6 +26,8 @@ from geoip_resolver import GeoIPResolver
 DEFAULT_MAX_BATCH = 50
 SUPPORTED = {"vless", "vmess", "trojan", "ss", "socks", "socks5"}
 PROXY_IPS_RE = re.compile(r"出口 ([^;]+)")
+INVALID_STATUS = "无效"
+VALID_STATUS = "有效"
 
 
 def configure_text_streams() -> None:
@@ -151,6 +154,50 @@ def config_for(node: str, port: int) -> dict:
         "inbounds": [{"listen": "127.0.0.1", "port": port, "protocol": "socks", "settings": {"udp": False}}],
         "outbounds": [outbound_for(node)],
     }
+
+
+def safe_node_summary(node: str) -> str:
+    scheme = (node.split("://", 1)[0] or "node").lower()
+    digest = hashlib.sha256(node.encode("utf-8", errors="replace")).hexdigest()[:8]
+    host = ""
+    port = ""
+    try:
+        if scheme == "vmess":
+            payload = json.loads(decode_b64(node.split("://", 1)[1].split("#", 1)[0]))
+            host = str(payload.get("add") or "")
+            port = str(payload.get("port") or "")
+        elif scheme == "ss" and "@" not in node.split("://", 1)[1].split("#", 1)[0]:
+            decoded = decode_b64(node.split("://", 1)[1].split("#", 1)[0])
+            parsed = urllib.parse.urlsplit("//" + decoded.rsplit("@", 1)[1])
+            host = parsed.hostname or ""
+            port = str(parsed.port or "")
+        else:
+            parsed = urllib.parse.urlsplit(node)
+            host = parsed.hostname or ""
+            port = str(parsed.port or "")
+    except (ValueError, KeyError, json.JSONDecodeError, UnicodeDecodeError, IndexError):
+        pass
+    parts = ["protocol=" + scheme, "name_hash=" + digest]
+    if host:
+        parts.insert(1, "host=" + host)
+    if port:
+        parts.insert(2 if host else 1, "port=" + port)
+    return " ".join(parts)
+
+
+def validation_reason_bucket(reason: str) -> str:
+    lowered = reason.lower()
+    if "timeout" in lowered or "timed out" in lowered or "超时" in reason:
+        return "timeout"
+    if "tls" in lowered:
+        return "tls_error"
+    if "connection reset" in lowered or "recv failure" in lowered or "reset by peer" in lowered:
+        return "connection_reset"
+    if "missing server" in lowered or "unsupported by xray" in lowered or "json" in lowered or "配置错误" in reason:
+        return "parse_error"
+    if "xray 调用失败" in reason or "xray 启动失败" in reason or "exception" in lowered or "traceback" in lowered:
+        return "exception"
+    return "invalid"
 
 
 def resolve_xray_path(path: Path) -> Path:
@@ -354,6 +401,18 @@ def main() -> int:
     if args.random:
         random.Random(args.seed).shuffle(eligible)
     batch = eligible[:min(max(args.limit, 0), args.max_batch)]
+    stats = {
+        "batch": len(batch),
+        "valid": 0,
+        "invalid": 0,
+        "timeout": 0,
+        "tls_error": 0,
+        "connection_reset": 0,
+        "parse_error": 0,
+        "exception": 0,
+        "new_valid": 0,
+    }
+    started = time.monotonic()
     try:
         with ThreadPoolExecutor(max_workers=args.workers) as executor:
             futures = {
@@ -371,13 +430,35 @@ def main() -> int:
             }
             for index, future in enumerate(as_completed(futures), 1):
                 node = futures[future]
-                status, reason, seconds = future.result()
+                try:
+                    status, reason, seconds = future.result()
+                except Exception as exc:
+                    status, reason, seconds = INVALID_STATUS, "程序异常: " + str(exc), 0.0
                 proxy_ips = proxy_ips_from_reason(reason)
-                country = geoip.country_for_ips(proxy_ips) if status == "有效" else ""
+                country = geoip.country_for_ips(proxy_ips) if status == VALID_STATUS else ""
                 database.record_validation(node, status, reason, seconds, proxy_ips, country)
-                print(f"[{index}/{len(batch)}] {status} {reason} {node}", flush=True)
+                if status == VALID_STATUS:
+                    stats["valid"] += 1
+                    if not args.valid_only:
+                        stats["new_valid"] += 1
+                else:
+                    stats["invalid"] += 1
+                    bucket = validation_reason_bucket(reason)
+                    if bucket in stats:
+                        stats[bucket] += 1
+                print(f"[{index}/{len(batch)}] {status} {reason} | {safe_node_summary(node)}", flush=True)
     finally:
         database.close()
+    elapsed = time.monotonic() - started
+    print(
+        "[验证汇总] batch={batch} valid={valid} invalid={invalid} timeout={timeout} "
+        "tls_error={tls_error} connection_reset={connection_reset} parse_error={parse_error} "
+        "exception={exception} new_valid={new_valid} elapsed={elapsed:.1f}s exit=0".format(
+            elapsed=elapsed,
+            **stats,
+        ),
+        flush=True,
+    )
     print("本批完成: " + str(len(batch)) + " 条", flush=True)
     return 0
 

@@ -3,7 +3,7 @@ import sys
 import unittest
 from pathlib import Path
 
-from node_validator import config_for, resolve_xray_path
+from node_validator import config_for, resolve_xray_path, safe_node_summary, validation_reason_bucket
 
 
 class NodeValidatorCompatibilityTest(unittest.TestCase):
@@ -38,6 +38,21 @@ class NodeValidatorCompatibilityTest(unittest.TestCase):
         self.assertEqual(inbound["port"], 10808)
         self.assertEqual(inbound["protocol"], "socks")
         self.assertEqual(config["outbounds"][0]["protocol"], "vless")
+
+    def test_safe_node_summary_masks_credentials(self):
+        summary = safe_node_summary("vless://uuid@example.com:443?security=tls#Hong%20Kong")
+        self.assertIn("protocol=vless", summary)
+        self.assertIn("host=example.com", summary)
+        self.assertIn("port=443", summary)
+        self.assertIn("name_hash=", summary)
+        self.assertNotIn("uuid", summary)
+        self.assertNotIn("Hong", summary)
+
+    def test_validation_reason_bucket_classifies_common_failures(self):
+        self.assertEqual(validation_reason_bucket("curl: (28) Operation timed out"), "timeout")
+        self.assertEqual(validation_reason_bucket("TLS connect error"), "tls_error")
+        self.assertEqual(validation_reason_bucket("Recv failure: Connection reset by peer"), "connection_reset")
+        self.assertEqual(validation_reason_bucket("missing server or port"), "parse_error")
 
 
 if __name__ == "__main__":
