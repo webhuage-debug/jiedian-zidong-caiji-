@@ -384,6 +384,12 @@ class WebAppRoutingTest(unittest.TestCase):
                     json.dumps({"ps": "unknown vmess", "add": "example.com", "port": "443", "id": "id"}).encode("utf-8")
                 ).decode("ascii").rstrip("=")
                 database.upsert_valid_node("vmess://" + payload, "ok", 0.05, "203.0.113.7", "")
+                for uri in (
+                    "vless://hk@example.com:443#Hong%20Kong",
+                    "vless://us@example.com:443#Los%20Angeles",
+                    "vless://vn@example.com:443#Vietnam",
+                ):
+                    database.mark_publish_node(uri, True)
 
                 handler = object.__new__(DashboardHandler)
                 claim_config = database.claim_code_config()
@@ -438,13 +444,15 @@ class WebAppRoutingTest(unittest.TestCase):
                     claim_code_version="v-unique",
                 )
                 for index, country in enumerate(["HK", "JP", "SG"], 1):
+                    uri = "vless://same" + str(index) + "@example.com:443#old"
                     database.upsert_valid_node(
-                        "vless://same" + str(index) + "@example.com:443#old",
+                        uri,
                         "ok",
                         0.1,
                         "203.0.113." + str(index),
                         country,
                     )
+                    database.mark_publish_node(uri, True)
 
                 captured = {}
                 original_convert = web_app.convert_with_sub_store
@@ -476,6 +484,29 @@ class WebAppRoutingTest(unittest.TestCase):
                 self.assertEqual(names, ["free-nodes", "free-nodes #2", "free-nodes #3"])
                 self.assertEqual(len(names), len(set(names)))
                 self.assertIn("free-nodes #2", result["content"])
+
+    def test_publish_pool_api_marks_candidate_for_final_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "nodes.db"
+            original_database = web_app.DATABASE
+            try:
+                web_app.DATABASE = database_path
+                uri = "vless://api-publish@example.com:443?type=ws&security=tls#Hong%20Kong"
+                with NodeDatabase(database_path) as database:
+                    database.upsert_valid_node(uri, "ok", 0.2, "203.0.113.40", "HK")
+                    database.refresh_premium_subscription_pool(10)
+                handler = object.__new__(DashboardHandler)
+                responses = []
+                handler.send_json = lambda payload, status=HTTPStatus.OK, headers=None: responses.append((payload, status))
+
+                handler.mark_publish_pool({"uri": uri, "publishable": True})
+
+                self.assertEqual(responses[-1][1], HTTPStatus.OK)
+                self.assertEqual(responses[-1][0]["publish_count"], 1)
+                with NodeDatabase(database_path) as database:
+                    self.assertEqual(len(database.export_publish_subscription_nodes(10)), 1)
+            finally:
+                web_app.DATABASE = original_database
 
     def test_bot_simulation_uses_local_logic_without_telegram(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -534,6 +565,9 @@ class WebAppRoutingTest(unittest.TestCase):
                         "private_instruction_message": "说明 {version}",
                         "subscription_card_message": "订阅 {subscription_url}",
                     })
+                    uri = "vless://flow@example.com:443#Hong%20Kong"
+                    database.upsert_valid_node(uri, "ok", 0.2, "203.0.113.30", "HK")
+                    database.mark_publish_node(uri, True)
                 handler = object.__new__(DashboardHandler)
                 responses = []
                 handler.send_json = lambda payload, status=HTTPStatus.OK, headers=None: responses.append((payload, status))

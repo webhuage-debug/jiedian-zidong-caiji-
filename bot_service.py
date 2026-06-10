@@ -276,6 +276,9 @@ class TelegramBot:
             elif database.claim_success_count(today, client_key, version) >= int(claim_config["daily_limit"]):
                 status = "limit_exceeded"
                 message = str(claim_config["limit_exceeded_message"])
+            elif database.publish_pool_count() <= 0:
+                status = "publish_pool_empty"
+                message = "本批免费节点正在筛选中，暂时没有可发放节点，请稍后再试。"
             database.record_claim_attempt(today, client_key, version, code, status, "", "telegram-bot")
             subscription = self.create_bot_subscription(database, config, user_id, username) if status == "success" else None
 

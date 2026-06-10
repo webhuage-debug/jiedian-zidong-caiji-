@@ -334,6 +334,31 @@ class NodeDatabaseTest(unittest.TestCase):
                 self.assertEqual(len(rows), 20)
                 self.assertTrue(all(row["premium_reason"] == "cached" for row in rows))
 
+    def test_publish_pool_requires_manual_mark_and_filters_incompatible_nodes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "nodes.db"
+            with NodeDatabase(path) as database:
+                publish_uri = "vless://publish@example.com:443?type=ws&security=tls#Hong%20Kong"
+                candidate_only_uri = "vless://candidate@example.com:443?type=ws#Japan"
+                database.upsert_valid_node(publish_uri, "ok", 0.2, "203.0.113.20", "HK")
+                database.upsert_valid_node(candidate_only_uri, "ok", 0.1, "203.0.113.21", "JP")
+                database.refresh_premium_subscription_pool(10)
+
+                self.assertEqual(database.export_publish_subscription_nodes(10), [])
+                overview = database.publish_pool_candidates()
+                self.assertGreaterEqual(overview["candidate_count"], 2)
+
+                database.mark_publish_node(publish_uri, True, "local ok")
+                rows = database.export_publish_subscription_nodes(10)
+                self.assertEqual([row["uri"] for row in rows], [publish_uri])
+                self.assertEqual(database.stats()["publish_nodes"], 1)
+
+                with self.assertRaises(ValueError):
+                    database.mark_publish_node("vless://blocked@example.com:443?type=xhttp#Hong%20Kong", True)
+
+                database.mark_publish_node(publish_uri, False)
+                self.assertEqual(database.export_publish_subscription_nodes(10), [])
+
     def test_stores_bot_config_verification_and_message_log(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "nodes.db"

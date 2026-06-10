@@ -163,6 +163,9 @@ class TelegramBotTest(unittest.TestCase):
                     "subscription_expire_hours": 2,
                     "subscription_export_limit": 50,
                 })
+                uri = "vless://publish@example.com:443#Hong%20Kong"
+                database.upsert_valid_node(uri, "ok", 0.2, "203.0.113.9", "HK")
+                database.mark_publish_node(uri, True)
             bot = FakeTelegramBot(path)
             bot.handle_update("token", config, {
                 "message": {
@@ -190,6 +193,31 @@ class TelegramBotTest(unittest.TestCase):
                 self.assertEqual(len(links), 1)
                 self.assertEqual(links[0]["max_uses"], 3)
                 self.assertEqual(links[0]["export_limit"], 50)
+
+    def test_private_claim_code_does_not_send_subscription_when_publish_pool_empty(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "nodes.db"
+            with NodeDatabase(path) as database:
+                database.update_claim_code_config({
+                    "code": "HUAGE2026",
+                    "version": "v-empty",
+                    "daily_limit": 1,
+                    "success_message": "ok",
+                })
+                config = database.update_bot_config({"public_base_url": "https://node.example.com"})
+            bot = FakeTelegramBot(path)
+            result = bot.handle_update("token", config, {
+                "message": {
+                    "text": "HUAGE2026",
+                    "chat": {"id": 200, "type": "private"},
+                    "from": {"id": 200, "username": "tester"},
+                }
+            })
+            self.assertEqual(result["status"], "publish_pool_empty")
+            self.assertFalse(result["subscription_created"])
+            self.assertIn("本批免费节点正在筛选中", bot.calls[0][2]["text"])
+            with NodeDatabase(path) as database:
+                self.assertEqual(database.subscription_links(), [])
 
     def test_simulated_group_keyword_does_not_call_telegram_api(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -571,8 +571,33 @@
           <div class="module-meter-grid subscription-meter" aria-label="订阅运行统计">
             <article><span>订阅链接</span><strong id="subscriptionMetricLinks">0</strong><small id="subscriptionMetricEnabled">启用 0</small></article>
             <article><span>可导出有效节点</span><strong id="subscriptionMetricValid">0</strong><small id="subscriptionMetricPremium">优质池 0</small></article>
+            <article><span>人工发布池</span><strong id="subscriptionMetricPublish">0</strong><small>Bot 只从这里发放</small></article>
             <article><span>默认导出</span><strong id="subscriptionMetricLimit">20</strong><small>每条订阅最多导出</small></article>
             <article><span>口令版本</span><strong id="subscriptionMetricClaimVersion">-</strong><small>旧版本链接自动失效</small></article>
+          </div>
+          <div class="notice-card">VPS 验证通过不代表用户本地可用。请先在本地客户端测试 Google / YouTube，确认可用后再标记为可发布。</div>
+          <div class="panel-subsection">
+            <div class="panel-heading compact-heading">
+              <div>
+                <p class="panel-kicker">发布池验收</p>
+                <h3>候选节点验收</h3>
+                <p class="hint" id="publishPoolSummary">发布池只保存人工确认可用的节点，Bot 订阅不会从优质池兜底输出。</p>
+              </div>
+              <div class="actions compact-actions">
+                <button class="ghost" id="refreshPublishPool">刷新发布池</button>
+                <button class="danger" id="clearPublishPool">清空发布池</button>
+              </div>
+            </div>
+            <div class="form-grid two">
+              <div>
+                <h3>优质候选池</h3>
+                <div class="profile-list" id="publishCandidates"></div>
+              </div>
+              <div>
+                <h3>已发布节点</h3>
+                <div class="profile-list" id="publishPoolList"></div>
+              </div>
+            </div>
           </div>
           <div class="subscription-list" id="subscriptionList"></div>
           <pre class="module-log" id="subscriptionLogs">暂无订阅日志。</pre>

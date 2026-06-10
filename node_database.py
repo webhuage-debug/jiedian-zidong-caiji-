@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import os
 import json
+import base64
 import sqlite3
 import urllib.parse
 from datetime import timedelta
@@ -41,6 +42,61 @@ def bot_private_start_url_value(username: object, payload: str = "claim") -> str
     if not normalized:
         return ""
     return "https://t.me/" + normalized + "?start=" + urllib.parse.quote(str(payload or "claim"))
+
+
+def decode_uri_b64(value: str) -> str:
+    return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4)).decode("utf-8", errors="replace")
+
+
+def uri_metadata(uri: str) -> Dict[str, object]:
+    text = str(uri or "")
+    protocol = protocol_of(text)
+    meta: Dict[str, object] = {
+        "protocol": protocol,
+        "server": "",
+        "port": "",
+        "network": "",
+        "tls": False,
+        "uuid_present": False,
+        "publish_compatible": False,
+        "publish_block_reason": "",
+    }
+    try:
+        if protocol == "vmess":
+            payload = text.split("://", 1)[1].split("#", 1)[0]
+            data = json.loads(decode_uri_b64(payload))
+            meta["server"] = str(data.get("add") or "")
+            meta["port"] = str(data.get("port") or "")
+            meta["network"] = str(data.get("net") or "")
+            meta["tls"] = str(data.get("tls") or "").lower() in ("tls", "true", "1")
+            meta["uuid_present"] = bool(str(data.get("id") or "").strip())
+        else:
+            parsed = urllib.parse.urlsplit(text)
+            query = urllib.parse.parse_qs(parsed.query)
+            meta["server"] = parsed.hostname or ""
+            meta["port"] = str(parsed.port or "")
+            meta["network"] = (query.get("type") or query.get("net") or [""])[0]
+            security = (query.get("security") or [""])[0]
+            meta["tls"] = security in ("tls", "reality") or str((query.get("tls") or [""])[0]).lower() in ("1", "true")
+            meta["uuid_present"] = bool(parsed.username)
+    except (ValueError, KeyError, json.JSONDecodeError, UnicodeDecodeError, IndexError):
+        meta["publish_block_reason"] = "节点格式解析失败"
+        return meta
+    blocked_protocols = {"tuic", "hysteria", "hysteria2", "hy2"}
+    if protocol in blocked_protocols:
+        meta["publish_block_reason"] = "协议暂不进入人工发布池"
+        return meta
+    if str(meta["network"]).lower() == "xhttp":
+        meta["publish_block_reason"] = "xhttp 默认不发布"
+        return meta
+    if not meta["server"] or not meta["port"]:
+        meta["publish_block_reason"] = "缺少 server 或 port"
+        return meta
+    if protocol in {"vless", "vmess"} and not meta["uuid_present"]:
+        meta["publish_block_reason"] = "缺少 uuid/id"
+        return meta
+    meta["publish_compatible"] = True
+    return meta
 
 
 ASIA_COUNTRIES = {
@@ -284,6 +340,23 @@ class NodeDatabase:
             );
             CREATE INDEX IF NOT EXISTS idx_premium_subscription_pool_score ON premium_subscription_pool (score DESC, updated_at DESC);
 
+            CREATE TABLE IF NOT EXISTS publish_subscription_pool (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                uri TEXT NOT NULL UNIQUE,
+                name TEXT NOT NULL DEFAULT '',
+                protocol TEXT NOT NULL DEFAULT '',
+                server TEXT NOT NULL DEFAULT '',
+                port TEXT NOT NULL DEFAULT '',
+                source_pool TEXT NOT NULL DEFAULT 'premium_subscription_pool',
+                manual_status TEXT NOT NULL DEFAULT 'publishable',
+                publish_enabled INTEGER NOT NULL DEFAULT 1,
+                manual_note TEXT NOT NULL DEFAULT '',
+                last_checked_at TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_publish_subscription_pool_status ON publish_subscription_pool (publish_enabled, manual_status, updated_at);
+
             CREATE TABLE IF NOT EXISTS "后台用户" (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 username TEXT NOT NULL UNIQUE,
@@ -382,6 +455,8 @@ class NodeDatabase:
                 user_agent_hash TEXT NOT NULL DEFAULT '',
                 node_count INTEGER NOT NULL DEFAULT 0,
                 latency_ms INTEGER NOT NULL DEFAULT 0,
+                source TEXT NOT NULL DEFAULT '',
+                export_count INTEGER NOT NULL DEFAULT 0,
                 message TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours'))
             );
@@ -463,6 +538,11 @@ class NodeDatabase:
             self.connection.execute('ALTER TABLE "订阅链接" ADD COLUMN "export_limit" INTEGER NOT NULL DEFAULT 100')
         if "claim_code_version" not in subscription_columns:
             self.connection.execute('ALTER TABLE "订阅链接" ADD COLUMN "claim_code_version" TEXT NOT NULL DEFAULT ""')
+        access_columns = {row[1] for row in self.connection.execute('PRAGMA table_info("订阅访问日志")')}
+        if "source" not in access_columns:
+            self.connection.execute('ALTER TABLE "订阅访问日志" ADD COLUMN "source" TEXT NOT NULL DEFAULT ""')
+        if "export_count" not in access_columns:
+            self.connection.execute('ALTER TABLE "订阅访问日志" ADD COLUMN "export_count" INTEGER NOT NULL DEFAULT 0')
         source_profile_columns = {row[1] for row in self.connection.execute('PRAGMA table_info("采集来源画像")')}
         source_profile_migrations = {
             "valid_count": "INTEGER NOT NULL DEFAULT 0",
@@ -774,6 +854,9 @@ class NodeDatabase:
         valid_count = self.count("有效节点")
         invalid_count = self.count("无效节点")
         premium_count = self.connection.execute("SELECT COUNT(*) FROM premium_subscription_pool").fetchone()[0]
+        publish_count = self.connection.execute(
+            "SELECT COUNT(*) FROM publish_subscription_pool WHERE publish_enabled = 1 AND manual_status = 'publishable'"
+        ).fetchone()[0]
         invalid_total = self.counter("invalid_nodes_total") + self.counter("invalid_nodes_pruned")
         if valid_count:
             statuses["有效"] = valid_count
@@ -791,6 +874,7 @@ class NodeDatabase:
             "valid_nodes": valid_count,
             "invalid_nodes": invalid_count,
             "premium_nodes": premium_count,
+            "publish_nodes": publish_count,
             "invalid_nodes_total": invalid_total,
             "historical_invalid_nodes": invalid_total,
             "duplicate_filtered": self.counter("duplicate_filtered"),
@@ -1815,6 +1899,147 @@ class NodeDatabase:
     def export_subscription_nodes(self, limit: int = DEFAULT_SUBSCRIPTION_TARGET, prefer_asia: bool = True) -> List[Dict[str, object]]:
         return self.premium_subscription_nodes(normalize_subscription_limit(limit), prefer_asia, 1.0)
 
+    def publish_pool_count(self) -> int:
+        return int(self.connection.execute(
+            "SELECT COUNT(*) FROM publish_subscription_pool WHERE publish_enabled = 1 AND manual_status = 'publishable'"
+        ).fetchone()[0])
+
+    def publish_pool_candidates(self, limit: int = 80) -> Dict[str, object]:
+        limit = max(1, min(int(limit or 80), 200))
+        rows = self.connection.execute(
+            """
+            SELECT v.uri, v.protocol, v.proxy_ips, v.seconds, v.last_validated, v.validation_count,
+                   v.country, p.score, p.reason,
+                   COALESCE(pub.manual_status, '') AS manual_status,
+                   COALESCE(pub.publish_enabled, 0) AS publish_enabled,
+                   COALESCE(pub.manual_note, '') AS manual_note
+            FROM premium_subscription_pool p
+            JOIN "有效节点" v ON v.uri = p.uri
+            LEFT JOIN publish_subscription_pool pub ON pub.uri = v.uri
+            ORDER BY p.score DESC, v.seconds ASC, v.validation_count DESC, p.updated_at DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+        candidates = []
+        for row in rows:
+            item = self._valid_node_row(row[:7])
+            item["premium_score"] = row[7]
+            item["premium_reason"] = row[8]
+            item["manual_status"] = row[9] or ""
+            item["publish_enabled"] = bool(row[10])
+            item["manual_note"] = row[11] or ""
+            item.update(uri_metadata(str(item["uri"])))
+            candidates.append(self._publish_display_row(item))
+        published = self.publish_pool_nodes(200)
+        return {
+            "candidates": candidates,
+            "candidate_count": len(candidates),
+            "publish_count": self.publish_pool_count(),
+            "published": [self._publish_display_row({**row, **uri_metadata(str(row.get("uri") or "")), "publish_enabled": True, "manual_status": "publishable"}) for row in published],
+            "pool": published,
+        }
+
+    def _publish_display_row(self, row: Dict[str, object]) -> Dict[str, object]:
+        return {
+            "uri": str(row.get("uri") or ""),
+            "protocol": str(row.get("protocol") or ""),
+            "country": str(row.get("country") or ""),
+            "server": str(row.get("server") or ""),
+            "port": str(row.get("port") or ""),
+            "network": str(row.get("network") or ""),
+            "tls": bool(row.get("tls")),
+            "seconds": float(row.get("seconds") or 0),
+            "last_validated": str(row.get("last_validated") or ""),
+            "validation_count": int(row.get("validation_count") or 0),
+            "premium_score": float(row.get("premium_score") or 0),
+            "premium_reason": str(row.get("premium_reason") or ""),
+            "manual_status": str(row.get("manual_status") or ""),
+            "publish_enabled": bool(row.get("publish_enabled")),
+            "manual_note": str(row.get("manual_note") or ""),
+            "publish_compatible": bool(row.get("publish_compatible")),
+            "publish_block_reason": str(row.get("publish_block_reason") or ""),
+        }
+
+    def mark_publish_node(self, uri: str, publishable: bool = True, note: str = "") -> Dict[str, object]:
+        uri = str(uri or "").strip()
+        if not uri:
+            raise ValueError("missing uri")
+        meta = uri_metadata(uri)
+        status = "publishable" if publishable else "rejected"
+        enabled = 1 if publishable else 0
+        if publishable and not meta.get("publish_compatible"):
+            raise ValueError(str(meta.get("publish_block_reason") or "节点不适合发布"))
+        self.connection.execute(
+            """
+            INSERT INTO publish_subscription_pool (
+                uri, name, protocol, server, port, source_pool, manual_status,
+                publish_enabled, manual_note, last_checked_at, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, 'premium_subscription_pool', ?, ?, ?, BEIJING_TIMESTAMP(), BEIJING_TIMESTAMP(), BEIJING_TIMESTAMP())
+            ON CONFLICT(uri) DO UPDATE SET
+                protocol = excluded.protocol,
+                server = excluded.server,
+                port = excluded.port,
+                manual_status = excluded.manual_status,
+                publish_enabled = excluded.publish_enabled,
+                manual_note = excluded.manual_note,
+                last_checked_at = BEIJING_TIMESTAMP(),
+                updated_at = BEIJING_TIMESTAMP()
+            """,
+            (
+                uri,
+                "",
+                str(meta.get("protocol") or protocol_of(uri)),
+                str(meta.get("server") or ""),
+                str(meta.get("port") or ""),
+                status,
+                enabled,
+                str(note or "")[:500],
+            ),
+        )
+        self.connection.commit()
+        return {"uri": uri, "manual_status": status, "publish_enabled": bool(enabled), **meta}
+
+    def remove_publish_node(self, uri: str) -> bool:
+        cursor = self.connection.execute("DELETE FROM publish_subscription_pool WHERE uri = ?", (str(uri or ""),))
+        self.connection.commit()
+        return bool(cursor.rowcount)
+
+    def clear_publish_pool(self) -> int:
+        cursor = self.connection.execute("DELETE FROM publish_subscription_pool")
+        self.connection.commit()
+        return int(cursor.rowcount or 0)
+
+    def publish_pool_nodes(self, limit: int = DEFAULT_SUBSCRIPTION_TARGET) -> List[Dict[str, object]]:
+        limit = max(1, min(int(limit or DEFAULT_SUBSCRIPTION_TARGET), MAX_SUBSCRIPTION_TARGET))
+        rows = self.connection.execute(
+            """
+            SELECT v.uri, v.protocol, v.proxy_ips, v.seconds, v.last_validated, v.validation_count,
+                   v.country, pub.manual_status, pub.manual_note, pub.updated_at
+            FROM publish_subscription_pool pub
+            JOIN "有效节点" v ON v.uri = pub.uri
+            WHERE pub.publish_enabled = 1 AND pub.manual_status = 'publishable'
+            ORDER BY pub.updated_at DESC, v.seconds ASC, v.validation_count DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+        result = []
+        for row in rows:
+            item = self._valid_node_row(row[:7])
+            meta = uri_metadata(str(item["uri"]))
+            if not meta.get("publish_compatible"):
+                continue
+            item["source_pool"] = "publish_pool"
+            item["manual_status"] = row[7]
+            item["manual_note"] = row[8]
+            item["publish_updated_at"] = row[9]
+            result.append(item)
+        return final_subscription_nodes(result, limit)
+
+    def export_publish_subscription_nodes(self, limit: int = DEFAULT_SUBSCRIPTION_TARGET) -> List[Dict[str, object]]:
+        return self.publish_pool_nodes(normalize_subscription_limit(limit))
+
     def iter_valid_nodes(self, limit: int = 50, prefer_asia: bool = True) -> Iterator[str]:
         for row in self.export_valid_nodes(limit, prefer_asia):
             yield str(row["uri"])
@@ -2281,17 +2506,33 @@ class NodeDatabase:
         node_count: int = 0,
         latency_ms: int = 0,
         message: str = "",
+        source: str = "",
+        export_count: Optional[int] = None,
     ) -> None:
         node_count = max(0, int(node_count or 0))
         latency_ms = max(0, int(latency_ms or 0))
+        if export_count is None:
+            export_count = node_count
+        export_count = max(0, int(export_count or 0))
         self.connection.execute(
             """
             INSERT INTO "订阅访问日志" (
                 access_date, token, status, ip_hash, user_agent_hash,
-                node_count, latency_ms, message, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, BEIJING_TIMESTAMP())
+                node_count, latency_ms, source, export_count, message, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, BEIJING_TIMESTAMP())
             """,
-            (access_date, token[:80], status[:80], ip_hash[:80], user_agent_hash[:80], node_count, latency_ms, message[:500]),
+            (
+                access_date,
+                token[:80],
+                status[:80],
+                ip_hash[:80],
+                user_agent_hash[:80],
+                node_count,
+                latency_ms,
+                str(source or "")[:80],
+                export_count,
+                message[:500],
+            ),
         )
         self.connection.execute(
             """

@@ -776,6 +776,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
                         database.claim_code_config(),
                     )
                 })
+        if route == "/api/publish-pool":
+            with NodeDatabase(DATABASE) as database:
+                return self.send_json(database.publish_pool_candidates())
         if route == "/api/subscription-converter/config":
             with NodeDatabase(DATABASE) as database:
                 return self.send_json({
@@ -907,6 +910,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return self.convert_subscription(payload)
         if route == "/api/subscription-converter/cache/clear":
             return self.clear_subscription_converter_cache()
+        if route == "/api/publish-pool/mark":
+            return self.mark_publish_pool(payload)
+        if route == "/api/publish-pool/remove":
+            return self.remove_publish_pool(payload)
+        if route == "/api/publish-pool/clear":
+            return self.clear_publish_pool()
         if route == "/api/xray/download":
             return self.download_xray_release(payload)
         if route == "/api/xray/activate":
@@ -1062,7 +1071,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 privacy_hash(user_agent),
                 int(result["count"]),
                 int((time.monotonic() - started) * 1000),
-                "ok | " + str(result["target_id"]),
+                "ok | " + str(result["target_id"]) + " | source=publish_pool | export_count=" + str(result["count"]),
+                source="publish_pool",
+                export_count=int(result["count"]),
             )
         LOG_BUS.emit("subscription", "订阅已访问 | " + str(link["name"]) + " | " + str(result["target_name"]) + " | 节点 " + str(result["count"]), "info")
         return self.send_text(str(result["content"]) + "\n", str(result["content_type"]))
@@ -1133,7 +1144,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 privacy_hash(user_agent),
                 int(result["count"]),
                 int((time.monotonic() - started) * 1000),
-                "ok | " + str(result["target_id"]),
+                "ok | " + str(result["target_id"]) + " | source=publish_pool | export_count=" + str(result["count"]),
+                source="publish_pool",
+                export_count=int(result["count"]),
             )
         LOG_BUS.emit("subscription", "订阅已访问 | " + str(link["name"]) + " | " + str(result["target_name"]) + " | 节点 " + str(result["count"]), "info")
         return self.send_text(str(result["content"]) + "\n", str(result["content_type"]))
@@ -1201,7 +1214,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         config = database.processing_config()
         template = link["rename_template"] or config["rename_template"]
         limit = normalize_subscription_limit(link.get("export_limit") or DEFAULT_SUBSCRIPTION_TARGET)
-        nodes = final_subscription_nodes(database.export_subscription_nodes(limit, True), limit)
+        nodes = database.export_publish_subscription_nodes(limit)
         rows = processed_nodes(nodes, template)
         if target_id in ("base64", ""):
             result = subscription_base64_from_rows(rows)
@@ -1211,6 +1224,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 "content": result["subscription"],
                 "content_type": "text/plain; charset=utf-8",
                 "count": int(result["count"]),
+                "source": "publish_pool",
             }
         if target_id == "raw":
             return {
@@ -1219,6 +1233,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 "content": "\n".join(str(row["uri"]) for row in rows),
                 "content_type": "text/plain; charset=utf-8",
                 "count": len(rows),
+                "source": "publish_pool",
             }
         if target_id not in SUB_STORE_TARGETS:
             raise ValueError("不支持的订阅格式")
@@ -1248,6 +1263,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 "content": str(cached.get("content") or ""),
                 "content_type": self.subscription_content_type(target_id),
                 "count": len(nodes),
+                "source": "publish_pool",
             }
         result = convert_with_sub_store(converter_config, target_id, content)
         output = str(result["content"])
@@ -1274,7 +1290,40 @@ class DashboardHandler(BaseHTTPRequestHandler):
             "content": output,
             "content_type": self.subscription_content_type(target_id),
             "count": len(nodes),
+            "source": "publish_pool",
         }
+
+    def mark_publish_pool(self, payload: dict) -> None:
+        uri = str(payload.get("uri") or "").strip()
+        publishable = bool(payload.get("publishable", True))
+        note = str(payload.get("note") or "").strip()
+        if not uri:
+            return self.send_json({"error": "缺少节点标识"}, HTTPStatus.BAD_REQUEST)
+        try:
+            with NodeDatabase(DATABASE) as database:
+                row = database.mark_publish_node(uri, publishable, note)
+                overview = database.publish_pool_candidates()
+        except ValueError as exc:
+            return self.send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+        LOG_BUS.emit("subscription", "发布池人工标记 | " + ("可发布" if publishable else "不可发布") + " | " + str(row.get("name") or row.get("server") or "node"), "info")
+        return self.send_json({"node": row, **overview})
+
+    def remove_publish_pool(self, payload: dict) -> None:
+        uri = str(payload.get("uri") or "").strip()
+        if not uri:
+            return self.send_json({"error": "缺少节点标识"}, HTTPStatus.BAD_REQUEST)
+        with NodeDatabase(DATABASE) as database:
+            removed = database.remove_publish_node(uri)
+            overview = database.publish_pool_candidates()
+        LOG_BUS.emit("subscription", "发布池移除节点 | removed=" + str(int(bool(removed))), "info")
+        return self.send_json({"removed": bool(removed), **overview})
+
+    def clear_publish_pool(self) -> None:
+        with NodeDatabase(DATABASE) as database:
+            removed = database.clear_publish_pool()
+            overview = database.publish_pool_candidates()
+        LOG_BUS.emit("subscription", "发布池已清空 | removed=" + str(removed), "warning")
+        return self.send_json({"removed": removed, **overview})
 
     def subscription_content_type(self, target_id: str) -> str:
         if target_id == "sing-box":

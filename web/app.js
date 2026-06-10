@@ -218,9 +218,10 @@ function updateDashboardSummary(data, auto, collectorRunning, validatorRunning, 
   const pending = Number(database.pending_nodes ?? database.statuses?.["未验证"] ?? 0);
   const valid = Number(database.valid_nodes || 0);
   const premium = Number(database.premium_nodes || 0);
+  const publish = Number(database.publish_nodes || 0);
   const invalid = Number(database.historical_invalid_nodes ?? database.invalid_nodes_total ?? database.invalid_nodes ?? 0);
   const exportLimit = Number($("subscriptionExportLimit")?.value || 30);
-  const output = Math.min(exportLimit || 30, premium || valid);
+  const output = Math.min(exportLimit || 30, publish);
   setText("dashVersion", app.version ? `当前 ${app.version}` : "版本未知");
   setText("dashTotalNodes", total.toLocaleString());
   setText("dashPendingNodes", pending.toLocaleString());
@@ -622,6 +623,7 @@ function updateModuleDashboards(data, collectorRunning, validatorRunning, auto =
 
   setText("subscriptionMetricValid", current.valid.toLocaleString());
   setText("subscriptionMetricPremium", `优质池 ${Number(database.premium_nodes || 0).toLocaleString()}`);
+  setText("subscriptionMetricPublish", Number(database.publish_nodes || 0).toLocaleString());
 
   moduleSnapshot = current;
   moduleSnapshotAt = now;
@@ -1218,6 +1220,89 @@ async function refreshConverterConfig() {
   } catch (error) {
     toast(error.message);
   }
+}
+
+async function refreshPublishPool() {
+  try {
+    const data = await jsonFetch(api("/api/publish-pool"));
+    renderPublishPool(data);
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+function publishNodeCard(node = {}, actions = "") {
+  const compatible = node.publish_compatible !== false;
+  const state = node.publish_enabled ? "已发布" : (node.manual_status === "rejected" ? "不可发布" : "候选");
+  const reason = node.publish_block_reason ? `；${escapeHtml(node.publish_block_reason)}` : "";
+  return `
+    <article class="profile-card ${compatible ? "" : "failed"}">
+      <div class="node-meta">
+        <span class="protocol">${escapeHtml(node.protocol || "-")}</span>
+        <span>地区 ${escapeHtml(node.country || "未知")}</span>
+        <span>${escapeHtml(state)}</span>
+      </div>
+      <div class="node-name">${escapeHtml(node.name || node.server || "未命名节点")}</div>
+      <div class="node-meta">
+        <span>server ${escapeHtml(node.server || "-")}</span>
+        <span>port ${escapeHtml(node.port || "-")}</span>
+        <span>network ${escapeHtml(node.network || "-")}</span>
+        <span>TLS ${node.tls ? "yes" : "no"}</span>
+      </div>
+      <div class="node-meta">
+        <span>VPS ${escapeHtml(node.validation_status || "valid")}</span>
+        <span>延迟 ${Number(node.latency_ms || 0)} ms</span>
+        <span>${compatible ? "可验收" : "默认不发布"}${reason}</span>
+      </div>
+      ${actions ? `<div class="actions compact-actions">${actions}</div>` : ""}
+    </article>
+  `;
+}
+
+function renderPublishPool(data = {}) {
+  const candidates = data.candidates || [];
+  const published = data.published || [];
+  const count = Number(data.publish_count || published.length || 0);
+  setText("subscriptionMetricPublish", count.toLocaleString());
+  setText("publishPoolSummary", `发布池 ${count.toLocaleString()} 条；候选 ${Number(data.candidate_count || candidates.length || 0).toLocaleString()} 条。Bot 订阅只从发布池输出。`);
+  const candidateTarget = $("publishCandidates");
+  const poolTarget = $("publishPoolList");
+  if (candidateTarget) {
+    candidateTarget.innerHTML = candidates.length ? candidates.map((node) => publishNodeCard(node, `
+      <button class="primary" data-publish-mark="1" data-uri="${escapeHtml(node.uri || "")}" ${node.publish_compatible === false ? "disabled" : ""}>标记可发布</button>
+      <button class="ghost" data-publish-mark="0" data-uri="${escapeHtml(node.uri || "")}">标记不可发布</button>
+      <button class="ghost" data-publish-remove="${escapeHtml(node.uri || "")}">移出发布池</button>
+    `)).join("") : `<p class="hint">暂无优质候选节点。请先运行采集和 VPS 验证。</p>`;
+  }
+  if (poolTarget) {
+    poolTarget.innerHTML = published.length ? published.map((node) => publishNodeCard(node, `
+      <button class="ghost" data-publish-mark="0" data-uri="${escapeHtml(node.uri || "")}">标记不可发布</button>
+      <button class="danger" data-publish-remove="${escapeHtml(node.uri || "")}">移出发布池</button>
+    `)).join("") : `<p class="hint">发布池为空。Bot 会提示“正在筛选中”，不会兜底发普通有效节点。</p>`;
+  }
+  bindPublishPoolActions();
+}
+
+function bindPublishPoolActions() {
+  document.querySelectorAll("[data-publish-mark]").forEach((button) => {
+    button.onclick = async () => {
+      const publishable = button.dataset.publishMark === "1";
+      const data = await post(api("/api/publish-pool/mark"), { uri: button.dataset.uri || "", publishable });
+      if (data) {
+        renderPublishPool(data);
+        toast(publishable ? "已标记为可发布" : "已标记为不可发布");
+      }
+    };
+  });
+  document.querySelectorAll("[data-publish-remove]").forEach((button) => {
+    button.onclick = async () => {
+      const data = await post(api("/api/publish-pool/remove"), { uri: button.dataset.publishRemove || "" });
+      if (data) {
+        renderPublishPool(data);
+        toast("已移出发布池");
+      }
+    };
+  });
 }
 
 async function saveConverterConfig() {
@@ -2015,6 +2100,15 @@ $("exportRawNodes").onclick = exportRawNodes;
 $("copySubscription").onclick = copySubscription;
 $("refreshSubscriptions").onclick = refreshSubscriptions;
 $("createSubscription").onclick = createSubscription;
+$("refreshPublishPool").onclick = refreshPublishPool;
+$("clearPublishPool").onclick = async () => {
+  if (!confirm("确定清空发布池吗？这不会删除节点库，只会停止对粉丝发放这些节点。")) return;
+  const data = await post(api("/api/publish-pool/clear"));
+  if (data) {
+    renderPublishPool(data);
+    toast("发布池已清空");
+  }
+};
 $("refreshConverterConfig").onclick = refreshConverterConfig;
 $("saveConverterConfig").onclick = saveConverterConfig;
 $("checkConverterHealth").onclick = checkConverterHealth;
@@ -2075,6 +2169,7 @@ async function startDashboard() {
     refreshProcessingConfig(),
     refreshProcessingPreview(),
     refreshSubscriptions(),
+    refreshPublishPool(),
     refreshConverterConfig(),
     refreshMaintenance(),
     refreshOpsStats(),
