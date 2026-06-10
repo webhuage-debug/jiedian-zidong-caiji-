@@ -43,18 +43,18 @@
       <div class="panel-heading">
         <div>
           <p class="panel-kicker">OVERVIEW</p>
-          <h2>节点库总览</h2>
-          <p class="hint" id="dashSummaryText">正在读取节点池、优质池和订阅状态。</p>
+          <h2>节点资产总览</h2>
+          <p class="hint" id="dashSummaryText">正在读取待验证库存、有效库存、优质池和最终订阅输出。</p>
         </div>
         <span class="badge" id="dashVersion">版本同步中</span>
       </div>
       <div class="dashboard-kpi-grid">
-        <article><span>节点库总数</span><strong id="dashTotalNodes">0</strong><small>采集入库总量</small></article>
-        <article><span>待验证节点</span><strong id="dashPendingNodes">0</strong><small>等待 Xray 检测</small></article>
-        <article><span>有效节点</span><strong id="dashValidNodes">0</strong><small>验证通过库存</small></article>
+        <article><span>当前库存</span><strong id="dashTotalNodes">0</strong><small>待验证 + 有效节点</small></article>
+        <article><span>待验证库存</span><strong id="dashPendingNodes">0</strong><small>采集后等待 Xray 检测</small></article>
+        <article><span>有效库存</span><strong id="dashValidNodes">0</strong><small>Xray 验证通过</small></article>
         <article><span>优质订阅池</span><strong id="dashPremiumNodes">0</strong><small>粉丝订阅候选</small></article>
         <article><span>预计输出</span><strong id="dashOutputNodes">0</strong><small>按当前导出上限估算</small></article>
-        <article><span>无效/剔除</span><strong id="dashInvalidNodes">0</strong><small>累计失败记录</small></article>
+        <article><span>历史剔除</span><strong id="dashInvalidNodes">0</strong><small>累计无效/复检剔除</small></article>
         <article><span>订阅链接</span><strong id="dashSubscriptionLinks">0</strong><small id="dashSubscriptionEnabled">启用 0</small></article>
         <article><span>转换缓存</span><strong id="dashConversionCache">0</strong><small>Sub-Store 缓存条数</small></article>
       </div>
@@ -215,7 +215,7 @@
         </article>
       </div>
       <div class="cockpit-strip">
-        <article><span>节点总数</span><strong id="totalNodes">0</strong></article>
+        <article><span>当前库存</span><strong id="totalNodes">0</strong></article>
         <article><span>无效节点</span><strong id="invalidNodes">0</strong><small id="invalidGaugeLabel">占比 0%</small></article>
         <article><span>重复过滤</span><strong id="duplicateNodes">0</strong></article>
         <article><span>建议动作</span><strong id="cockpitAction">等待判断</strong></article>

@@ -214,11 +214,11 @@ function updateCockpit(data, auto, collectorRunning, validatorRunning) {
 function updateDashboardSummary(data, auto, collectorRunning, validatorRunning, botRunning) {
   const database = data.database || {};
   const app = data.app || {};
-  const total = Number(database.all_nodes ?? database.total_nodes ?? 0);
+  const total = Number(database.current_inventory_nodes ?? database.all_nodes ?? database.total_nodes ?? 0);
   const pending = Number(database.pending_nodes ?? database.statuses?.["未验证"] ?? 0);
   const valid = Number(database.valid_nodes || 0);
   const premium = Number(database.premium_nodes || 0);
-  const invalid = Number(database.invalid_nodes_total || database.invalid_nodes || 0);
+  const invalid = Number(database.historical_invalid_nodes ?? database.invalid_nodes_total ?? database.invalid_nodes ?? 0);
   const exportLimit = Number($("subscriptionExportLimit")?.value || 30);
   const output = Math.min(exportLimit || 30, premium || valid);
   setText("dashVersion", app.version ? `当前 ${app.version}` : "版本未知");
@@ -228,7 +228,7 @@ function updateDashboardSummary(data, auto, collectorRunning, validatorRunning, 
   setText("dashPremiumNodes", premium.toLocaleString());
   setText("dashOutputNodes", output.toLocaleString());
   setText("dashInvalidNodes", invalid.toLocaleString());
-  setText("dashSummaryText", `有效 ${valid.toLocaleString()}，优质池 ${premium.toLocaleString()}，预计订阅输出 ${output.toLocaleString()}。`);
+  setText("dashSummaryText", `当前库存 ${total.toLocaleString()}：待验证 ${pending.toLocaleString()}，有效 ${valid.toLocaleString()}；优质池 ${premium.toLocaleString()}，预计订阅输出 ${output.toLocaleString()}。`);
   setText("dashAutoState", auto.enabled ? "自动控制开启" : "自动控制关闭");
   setText("dashAutoReason", auto.last_reason || "等待状态同步");
   setText("dashCollectorState", collectorRunning ? "采集中" : "采集停止");
@@ -681,7 +681,7 @@ async function refreshStatus() {
     }
     $("connectionDot").classList.add("online");
     $("connectionText").textContent = "本地服务在线";
-    $("totalNodes").textContent = data.database.all_nodes ?? data.database.total_nodes;
+    $("totalNodes").textContent = data.database.current_inventory_nodes ?? data.database.all_nodes ?? data.database.total_nodes;
     $("validNodes").textContent = data.database.valid_nodes;
     $("pendingNodes").textContent = data.database.pending_nodes ?? (data.database.statuses["未验证"] || 0);
     $("invalidNodes").textContent = data.database.invalid_nodes ?? (data.database.statuses["无效"] || 0);

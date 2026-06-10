@@ -23,6 +23,8 @@ class NodeDatabaseTest(unittest.TestCase):
                 self.assertEqual(database.count("\u8282\u70b9\u5e93"), 0)
                 self.assertEqual(database.count("\u6709\u6548\u8282\u70b9"), 1)
                 self.assertEqual(database.stats()["valid_nodes"], 1)
+                self.assertEqual(database.stats()["current_inventory_nodes"], 1)
+                self.assertEqual(database.stats()["asset_nodes"], 1)
                 self.assertEqual(database.stats()["statuses"]["\u6709\u6548"], 1)
                 self.assertEqual(database.valid_nodes()[0]["proxy_ips"], "203.0.113.10")
                 self.assertEqual(list(database.iter_nodes()), [])
@@ -34,6 +36,8 @@ class NodeDatabaseTest(unittest.TestCase):
                 self.assertEqual(database.stats()["invalid_nodes"], 0)
                 self.assertEqual(database.stats()["pending_nodes"], 0)
                 self.assertEqual(database.stats()["all_nodes"], 0)
+                self.assertEqual(database.stats()["current_inventory_nodes"], 0)
+                self.assertEqual(database.stats()["historical_invalid_nodes"], 1)
 
             connection = sqlite3.connect(path)
             try:
