@@ -3,7 +3,7 @@ import unittest
 import json
 from pathlib import Path
 
-from bot_service import TelegramBot, bot_private_start_url, keywords
+from bot_service import TelegramBot, bot_private_start_url, keywords, normalize_bot_username
 from node_database import NodeDatabase
 
 
@@ -14,6 +14,14 @@ class FakeTelegramBot(TelegramBot):
 
     def api(self, token, method, fields, timeout=20):
         self.calls.append((token, method, fields))
+        return {"ok": True, "result": []}
+
+
+class FakeGetMeTelegramBot(FakeTelegramBot):
+    def api(self, token, method, fields, timeout=20):
+        self.calls.append((token, method, fields))
+        if method == "getMe":
+            return {"ok": True, "result": {"username": "AutoHuageBot"}}
         return {"ok": True, "result": []}
 
 
@@ -79,6 +87,28 @@ class TelegramBotTest(unittest.TestCase):
             bot_private_start_url({"bot_username": "@HuageNodeBot"}, "claim"),
             "https://t.me/HuageNodeBot?start=claim",
         )
+
+    def test_bot_username_accepts_tme_url_and_config_exposes_claim_entry(self):
+        self.assertEqual(normalize_bot_username("https://t.me/HuageNodeBot"), "HuageNodeBot")
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "nodes.db"
+            with NodeDatabase(path) as database:
+                config = database.update_bot_config({"bot_username": "https://t.me/HuageNodeBot"})
+            self.assertEqual(config["bot_username"], "HuageNodeBot")
+            self.assertTrue(config["claim_entry_ok"])
+            self.assertEqual(config["bot_private_start_url"], "https://t.me/HuageNodeBot?start=claim")
+
+    def test_bot_runtime_autofills_username_from_get_me(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "nodes.db"
+            with NodeDatabase(path) as database:
+                config = database.update_bot_config({"bot_token": "123:abc", "bot_username": ""})
+            bot = FakeGetMeTelegramBot(path)
+            updated = bot.ensure_bot_username("123:abc", config)
+            self.assertEqual(updated["bot_username"], "AutoHuageBot")
+            self.assertEqual(updated["bot_private_start_url"], "https://t.me/AutoHuageBot?start=claim")
+            with NodeDatabase(path) as database:
+                self.assertEqual(database.bot_config()["bot_username"], "AutoHuageBot")
 
     def test_non_matching_keyword_does_not_reply(self):
         with tempfile.TemporaryDirectory() as directory:

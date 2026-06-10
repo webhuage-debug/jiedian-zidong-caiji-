@@ -6,6 +6,7 @@ from __future__ import annotations
 import os
 import json
 import sqlite3
+import urllib.parse
 from datetime import timedelta
 from pathlib import Path
 from typing import Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
@@ -21,6 +22,25 @@ from subscription_filter import (
     subscription_quality_score,
     subscription_sort_key,
 )
+
+
+def normalize_bot_username_value(value: object) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if text.startswith("@"):
+        text = text[1:]
+    parsed = urllib.parse.urlsplit(text)
+    if parsed.scheme in ("http", "https") and (parsed.hostname or "").lower() in ("t.me", "telegram.me"):
+        text = parsed.path.strip("/").split("/", 1)[0]
+    return text.strip().lstrip("@")
+
+
+def bot_private_start_url_value(username: object, payload: str = "claim") -> str:
+    normalized = normalize_bot_username_value(username)
+    if not normalized:
+        return ""
+    return "https://t.me/" + normalized + "?start=" + urllib.parse.quote(str(payload or "claim"))
 
 
 ASIA_COUNTRIES = {
@@ -1965,6 +1985,15 @@ class NodeDatabase:
             except (TypeError, ValueError):
                 config[key] = default
         token = str(config["bot_token"])
+        config["bot_username"] = normalize_bot_username_value(config.get("bot_username"))
+        private_start_url = bot_private_start_url_value(config["bot_username"], "claim")
+        config["bot_private_start_url"] = private_start_url
+        config["claim_entry_ok"] = bool(private_start_url)
+        config["claim_entry_reason"] = (
+            "群按钮将打开 Telegram 私聊领取"
+            if private_start_url
+            else "Bot 用户名未配置，群按钮无法生成 Telegram 私聊入口"
+        )
         config["token_configured"] = bool(token)
         if mask_secrets and token:
             config["bot_token"] = token[:6] + "..." + token[-4:]
@@ -1987,6 +2016,8 @@ class NodeDatabase:
                 value = normalize_subscription_limit(value)
             elif key == "auto_run":
                 value = "1" if value is True or str(value).lower() in ("1", "true", "yes", "on") else "0"
+            elif key == "bot_username":
+                value = normalize_bot_username_value(value)
             else:
                 value = str(value).strip()
             cleaned[key] = value

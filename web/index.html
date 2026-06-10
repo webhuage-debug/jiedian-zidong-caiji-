@@ -730,6 +730,7 @@
           <div class="auto-status-grid bot-status-grid">
             <div><span class="status-light" id="botStateLight"></span><strong id="botState">已停止</strong><small>机器人当前运行状态</small></div>
             <div><span class="status-light" id="botAutoLight"></span><strong id="botAutoState">自动运行已关闭</strong><small>后台重启后是否自动恢复机器人</small></div>
+            <div><span class="status-light" id="botClaimEntryLight"></span><strong id="botClaimEntryState">群按钮入口未配置</strong><small id="botClaimEntryUrl">等待读取</small></div>
           </div>
           <div class="form-grid three">
             <label>机器人令牌
@@ -737,7 +738,7 @@
               <input id="botToken" type="password" autocomplete="off" placeholder="例如：123456:ABC...">
             </label>
             <label>机器人用户名
-              <small>用于后台备注，例如 @VMTOK_bot。</small>
+              <small>用于生成群按钮私聊入口，例如 @VMTOK_bot；也可填写 https://t.me/VMTOK_bot。</small>
               <input id="botUsername" placeholder="@VMTOK_bot">
             </label>
             <label>关键字

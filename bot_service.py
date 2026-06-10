@@ -36,11 +36,46 @@ def youtube_channel_url(config: Dict[str, object]) -> str:
     return str(config.get("youtube_channel_url") or config.get("youtube_url") or "").strip()
 
 
+def normalize_bot_username(value: object) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if text.startswith("@"):
+        text = text[1:]
+    parsed = urllib.parse.urlsplit(text)
+    if parsed.scheme in ("http", "https") and (parsed.hostname or "").lower() in ("t.me", "telegram.me"):
+        text = parsed.path.strip("/").split("/", 1)[0]
+    return text.strip().lstrip("@")
+
+
 def bot_private_start_url(config: Dict[str, object], payload: str = "claim") -> str:
-    username = str(config.get("bot_username") or "").strip().lstrip("@")
+    username = normalize_bot_username(config.get("bot_username"))
     if not username:
         return ""
     return "https://t.me/" + username + "?start=" + urllib.parse.quote(payload)
+
+
+def bot_claim_entry_status(config: Dict[str, object]) -> Dict[str, object]:
+    username = normalize_bot_username(config.get("bot_username"))
+    url = bot_private_start_url({**config, "bot_username": username}, "claim")
+    ok = bool(username and url)
+    return {
+        "ok": ok,
+        "bot_username": username,
+        "private_start_url": url,
+        "reason": "群按钮将打开 Telegram 私聊领取" if ok else "Bot 用户名未配置，群按钮无法生成 Telegram 私聊入口",
+    }
+
+
+def bot_config_with_claim_entry(config: Dict[str, object]) -> Dict[str, object]:
+    entry = bot_claim_entry_status(config)
+    return {
+        **config,
+        "bot_username": entry["bot_username"],
+        "bot_private_start_url": entry["private_start_url"],
+        "claim_entry_ok": entry["ok"],
+        "claim_entry_reason": entry["reason"],
+    }
 
 
 def render_template(template: object, context: Dict[str, object]) -> str:
@@ -79,6 +114,7 @@ class TelegramBot:
                 time.sleep(3)
                 continue
             try:
+                config = self.ensure_bot_username(token, config)
                 updates = self.api(token, "getUpdates", {
                     "offset": self.offset,
                     "timeout": 25,
@@ -90,6 +126,23 @@ class TelegramBot:
             except (OSError, ValueError) as error:
                 log("Telegram 请求失败，5 秒后重试 | " + self.describe_error(error))
                 time.sleep(5)
+
+    def ensure_bot_username(self, token: str, config: Dict[str, object]) -> Dict[str, object]:
+        if normalize_bot_username(config.get("bot_username")):
+            return bot_config_with_claim_entry(config)
+        try:
+            result = self.api(token, "getMe", {}, timeout=15).get("result", {})
+        except (OSError, ValueError) as error:
+            log("BOT 用户名自动识别失败，群按钮暂无法直达私聊 | " + self.describe_error(error))
+            return bot_config_with_claim_entry(config)
+        username = normalize_bot_username(result.get("username"))
+        if not username:
+            log("BOT 用户名自动识别失败：Telegram getMe 未返回 username")
+            return bot_config_with_claim_entry(config)
+        with NodeDatabase(self.database) as database:
+            saved = database.update_bot_config({"bot_username": username})
+        log("BOT 用户名已自动识别并保存 | @" + username)
+        return bot_config_with_claim_entry({**config, **saved, "bot_token": token})
 
     def handle_update(self, token: str, config: Dict[str, object], update: dict) -> dict:
         message = update.get("message") or {}
@@ -169,7 +222,7 @@ class TelegramBot:
         private_url = bot_private_start_url(config, "claim")
         context = {
             "bot_private_url": private_url,
-            "bot_username": str(config.get("bot_username") or "").strip(),
+            "bot_username": normalize_bot_username(config.get("bot_username")),
         }
         text = render_template(config.get("group_prompt_message"), context)
         reply_markup = None

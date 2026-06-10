@@ -774,6 +774,9 @@ function applyBotConfig(config = {}) {
   $("botSubscriptionMaxUses").value = config.subscription_max_uses ?? 10;
   $("botSubscriptionExpireHours").value = config.subscription_expire_hours ?? 24;
   $("botSubscriptionExportLimit").value = config.subscription_export_limit ?? 20;
+  setText("botClaimEntryState", config.claim_entry_ok ? "群按钮直达私聊" : "群按钮入口未配置");
+  setText("botClaimEntryUrl", config.bot_private_start_url || config.claim_entry_reason || "请填写机器人用户名");
+  setLight("botClaimEntryLight", !!config.claim_entry_ok, !config.claim_entry_ok);
 }
 
 function botPayload() {
