@@ -508,6 +508,38 @@ class WebAppRoutingTest(unittest.TestCase):
             finally:
                 web_app.DATABASE = original_database
 
+    def test_manual_valid_node_api_imports_and_disable_clears_output_pools(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "nodes.db"
+            original_database = web_app.DATABASE
+            try:
+                web_app.DATABASE = database_path
+                uri = "vless://api-manual@example.com:443?type=ws&security=tls#HK"
+                handler = object.__new__(DashboardHandler)
+                responses = []
+                handler.send_json = lambda payload, status=HTTPStatus.OK, headers=None: responses.append((payload, status))
+
+                handler.import_manual_valid_nodes({"nodes": uri + "\nnot-a-node", "note": "manual"})
+
+                self.assertEqual(responses[-1][1], HTTPStatus.OK)
+                self.assertEqual(responses[-1][0]["result"]["added_count"], 1)
+                self.assertEqual(responses[-1][0]["result"]["invalid_count"], 1)
+                with NodeDatabase(database_path) as database:
+                    self.assertEqual(database.publish_pool_count(), 0)
+                    database.refresh_premium_subscription_pool(10)
+                    database.mark_publish_node(uri, True)
+                    self.assertEqual(database.publish_pool_count(), 1)
+
+                handler.disable_valid_node({"uri": uri, "reason": "local bad"})
+
+                self.assertEqual(responses[-1][1], HTTPStatus.OK)
+                self.assertTrue(responses[-1][0]["result"]["conversion_cache_cleared"])
+                with NodeDatabase(database_path) as database:
+                    self.assertEqual(database.valid_node_count(), 0)
+                    self.assertEqual(database.publish_pool_count(), 0)
+            finally:
+                web_app.DATABASE = original_database
+
     def test_bot_simulation_uses_local_logic_without_telegram(self):
         with tempfile.TemporaryDirectory() as directory:
             database_path = Path(directory) / "nodes.db"

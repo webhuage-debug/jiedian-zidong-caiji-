@@ -1109,15 +1109,106 @@ async function refreshNodes() {
       <article class="node-card compact-node">
         <div class="node-meta compact-node-meta">
           <span class="protocol">${escapeHtml(node.protocol || "-")}</span>
-          <span>${escapeHtml(node.country || "未知")}</span>
+          <span>地区 ${escapeHtml(node.country || "未知")}</span>
           <span>${Number(node.seconds || 0).toFixed(2)} 秒</span>
           <span>评分 ${node.quality_score ?? 0}</span>
+          <span>${node.manual_added ? "手动添加" : "自动验证"}</span>
+          <span>${node.cf_candidate ? "CF 候选" : "普通候选"}</span>
+          <span>${node.published ? "已发布" : "未发布"}</span>
         </div>
-        <div class="node-uri compact-node-uri" title="${escapeHtml(node.uri)}">${escapeHtml(node.uri)}</div>
-      </article>`).join("") : `<p class="hint">暂无有效节点。启动验证后，通过稳定检查的节点会出现在这里。</p>`;
+        <div class="node-name">${escapeHtml(node.server || "未知 server")} : ${escapeHtml(node.port || "-")}</div>
+        <div class="node-meta compact-node-meta">
+          <span>network ${escapeHtml(node.network || "-")}</span>
+          <span>TLS ${node.tls ? "yes" : "no"}</span>
+          <span>source ${escapeHtml(node.source_type || "-")}</span>
+          <span>最近 ${escapeHtml(node.last_validated || "-")}</span>
+        </div>
+        <div class="actions compact-actions">
+          <button class="primary" data-valid-publish="${escapeHtml(node.uri || "")}">标记可发布</button>
+          <button class="ghost" data-valid-unpublish="${escapeHtml(node.uri || "")}">移出发布池</button>
+          <button class="ghost" data-valid-premium-remove="${escapeHtml(node.uri || "")}">移出优质池</button>
+          <button class="ghost" data-valid-disable="${escapeHtml(node.uri || "")}">禁用</button>
+          <button class="danger" data-valid-delete="${escapeHtml(node.uri || "")}">删除</button>
+        </div>
+      </article>`).join("") : `<p class="hint">暂无有效节点。启动验证后，通过稳定检查的节点会出现在这里，也可以手动导入候选。</p>`;
+    bindValidNodeActions();
   } catch (error) {
     toast(error.message);
   }
+}
+
+async function importManualNodes() {
+  try {
+    const data = await jsonFetch(api("/api/valid-nodes/manual-import"), {
+      method: "POST",
+      body: JSON.stringify({
+        nodes: $("manualNodeInput").value,
+        note: $("manualNodeNote").value,
+      }),
+    });
+    const result = data.result || {};
+    setText("manualNodeImportSummary", `新增 ${result.added_count || 0}，重复 ${result.duplicate_count || 0}，无效 ${result.invalid_count || 0}`);
+    if (result.invalid?.length) {
+      toast(`有 ${result.invalid.length} 条格式错误，已拒绝入库`);
+    } else {
+      toast("手动节点导入完成");
+    }
+    if (result.added_count) $("manualNodeInput").value = "";
+    await refreshStatus();
+    await refreshNodes();
+    await refreshPublishPool();
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+function bindValidNodeActions() {
+  document.querySelectorAll("[data-valid-publish]").forEach((button) => {
+    button.onclick = async () => {
+      const data = await post(api("/api/publish-pool/mark"), { uri: button.dataset.validPublish || "", publishable: true });
+      if (data) {
+        renderPublishPool(data);
+        await refreshNodes();
+        toast("已标记为可发布");
+      }
+    };
+  });
+  document.querySelectorAll("[data-valid-unpublish]").forEach((button) => {
+    button.onclick = async () => {
+      const data = await post(api("/api/publish-pool/remove"), { uri: button.dataset.validUnpublish || "" });
+      if (data) {
+        renderPublishPool(data);
+        await refreshNodes();
+        toast("已移出发布池");
+      }
+    };
+  });
+  document.querySelectorAll("[data-valid-premium-remove]").forEach((button) => {
+    button.onclick = async () => {
+      await post(api("/api/valid-nodes/remove-premium"), { uri: button.dataset.validPremiumRemove || "" });
+      await refreshNodes();
+      await refreshPublishPool();
+      toast("已移出优质池");
+    };
+  });
+  document.querySelectorAll("[data-valid-disable]").forEach((button) => {
+    button.onclick = async () => {
+      if (!confirm("确定禁用这个有效节点吗？禁用后会同步移出优质池、发布池并清空转换缓存。")) return;
+      await post(api("/api/valid-nodes/disable"), { uri: button.dataset.validDisable || "", reason: "manual_node_disable" });
+      await refreshNodes();
+      await refreshPublishPool();
+      toast("节点已禁用");
+    };
+  });
+  document.querySelectorAll("[data-valid-delete]").forEach((button) => {
+    button.onclick = async () => {
+      if (!confirm("确定删除这个有效节点吗？删除后会同步移出优质池、发布池并清空转换缓存。")) return;
+      await post(api("/api/valid-nodes/delete"), { uri: button.dataset.validDelete || "", reason: "manual_node_delete" });
+      await refreshNodes();
+      await refreshPublishPool();
+      toast("节点已删除");
+    };
+  });
 }
 
 async function refreshProcessingConfig() {
@@ -1252,6 +1343,9 @@ function publishNodeCard(node = {}, actions = "") {
       <div class="node-meta">
         <span>VPS ${escapeHtml(node.validation_status || "valid")}</span>
         <span>延迟 ${Number(node.latency_ms || 0)} ms</span>
+        <span>source ${escapeHtml(node.source_type || "-")}</span>
+        <span>${node.cf_candidate ? "CF 候选" : "非 CF"}</span>
+        <span>${node.manual_added ? "手动添加" : "自动来源"}</span>
         <span>${compatible ? "可验收" : "默认不发布"}${reason}</span>
       </div>
       ${actions ? `<div class="actions compact-actions">${actions}</div>` : ""}
@@ -2092,6 +2186,7 @@ $("clearLogs").onclick = async () => {
   renderLogs();
 };
 $("refreshNodes").onclick = refreshNodes;
+$("importManualNodes").onclick = importManualNodes;
 $("refreshProfiles").onclick = refreshProfiles;
 $("refreshProcessingPreview").onclick = previewRenameTemplate;
 $("saveRenameTemplate").onclick = saveRenameTemplate;

@@ -6,6 +6,8 @@ from __future__ import annotations
 import os
 import json
 import base64
+import hashlib
+import re
 import sqlite3
 import urllib.parse
 from datetime import timedelta
@@ -48,6 +50,60 @@ def decode_uri_b64(value: str) -> str:
     return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4)).decode("utf-8", errors="replace")
 
 
+CF_SOURCE_REPOS = {
+    "free-nodes/v2rayfree",
+    "zengfr/free-vpn-subscribe",
+    "FreeFolksOn/abc-configs-free-vpn-proxy-list",
+    "mehdirzfx/v2ray-sub",
+    "NiREvil/vless",
+    "mermeroo/V2RAY-CLASH-BASE64-Subscription.Links",
+    "Surfboardv2ray/v2ray-worker-sub",
+}
+
+CF_REFERENCE_REPOS = {
+    "zizifn/edgetunnel",
+    "cmliu/edgetunnel",
+    "Vauth/vless-cf",
+    "yonggekkk/Cloudflare-vless-trojan",
+    "vfarid/v2ray-worker",
+    "zhu327/workers-tunnel",
+    "6Kmfi6HP/EDtunnel",
+    "Surfboardv2ray/Trojan-worker",
+    "henrysheep256/Subscription-Generator",
+    "dead-man1/CF-Worker-Sub-Manager",
+    "NiREvil/bia-pain-bache",
+    "7Sageer/sublink-worker",
+}
+
+CF_KEYWORDS = (
+    "workers.dev", "pages.dev", "trycloudflare.com", "cloudflare", "edgetunnel",
+    "worker", "pages", "cf-", "-cf", "cdn-cgi",
+)
+
+
+def _b64_decode_best_effort(value: str) -> str:
+    try:
+        return decode_uri_b64(value)
+    except Exception:
+        try:
+            return base64.b64decode(value + "=" * (-len(value) % 4)).decode("utf-8", errors="replace")
+        except Exception:
+            return ""
+
+
+def _split_host_port(value: str) -> Tuple[str, str]:
+    text = str(value or "").strip()
+    if not text:
+        return "", ""
+    if text.startswith("[") and "]:" in text:
+        host, port = text.rsplit(":", 1)
+        return host.strip("[]"), port
+    if ":" in text:
+        host, port = text.rsplit(":", 1)
+        return host, port
+    return text, ""
+
+
 def uri_metadata(uri: str) -> Dict[str, object]:
     text = str(uri or "")
     protocol = protocol_of(text)
@@ -58,6 +114,10 @@ def uri_metadata(uri: str) -> Dict[str, object]:
         "network": "",
         "tls": False,
         "uuid_present": False,
+        "credential": "",
+        "host": "",
+        "sni": "",
+        "path": "",
         "publish_compatible": False,
         "publish_block_reason": "",
     }
@@ -69,7 +129,27 @@ def uri_metadata(uri: str) -> Dict[str, object]:
             meta["port"] = str(data.get("port") or "")
             meta["network"] = str(data.get("net") or "")
             meta["tls"] = str(data.get("tls") or "").lower() in ("tls", "true", "1")
-            meta["uuid_present"] = bool(str(data.get("id") or "").strip())
+            meta["credential"] = str(data.get("id") or "")
+            meta["uuid_present"] = bool(str(meta["credential"]).strip())
+            meta["host"] = str(data.get("host") or "")
+            meta["sni"] = str(data.get("sni") or "")
+            meta["path"] = str(data.get("path") or "")
+        elif protocol in {"ss", "ssr"}:
+            body = text.split("://", 1)[1].split("#", 1)[0].split("?", 1)[0]
+            decoded = _b64_decode_best_effort(body)
+            candidate = decoded or urllib.parse.unquote(body)
+            if "@" in candidate:
+                credential, endpoint = candidate.rsplit("@", 1)
+                server, port = _split_host_port(endpoint)
+            else:
+                parsed = urllib.parse.urlsplit(text)
+                credential = parsed.username or ""
+                server = parsed.hostname or ""
+                port = str(parsed.port or "")
+            meta["server"] = server
+            meta["port"] = str(port or "")
+            meta["credential"] = credential
+            meta["uuid_present"] = bool(credential)
         else:
             parsed = urllib.parse.urlsplit(text)
             query = urllib.parse.parse_qs(parsed.query)
@@ -78,7 +158,11 @@ def uri_metadata(uri: str) -> Dict[str, object]:
             meta["network"] = (query.get("type") or query.get("net") or [""])[0]
             security = (query.get("security") or [""])[0]
             meta["tls"] = security in ("tls", "reality") or str((query.get("tls") or [""])[0]).lower() in ("1", "true")
-            meta["uuid_present"] = bool(parsed.username)
+            meta["credential"] = urllib.parse.unquote(parsed.username or "")
+            meta["uuid_present"] = bool(meta["credential"])
+            meta["host"] = (query.get("host") or [""])[0]
+            meta["sni"] = (query.get("sni") or query.get("peer") or [""])[0]
+            meta["path"] = (query.get("path") or [""])[0]
     except (ValueError, KeyError, json.JSONDecodeError, UnicodeDecodeError, IndexError):
         meta["publish_block_reason"] = "节点格式解析失败"
         return meta
@@ -92,11 +176,43 @@ def uri_metadata(uri: str) -> Dict[str, object]:
     if not meta["server"] or not meta["port"]:
         meta["publish_block_reason"] = "缺少 server 或 port"
         return meta
-    if protocol in {"vless", "vmess"} and not meta["uuid_present"]:
+    if protocol in {"vless", "vmess", "trojan", "ss", "ssr"} and not meta["uuid_present"]:
         meta["publish_block_reason"] = "缺少 uuid/id"
         return meta
     meta["publish_compatible"] = True
     return meta
+
+
+def node_fingerprint(uri: str) -> str:
+    meta = uri_metadata(uri)
+    parts = [
+        str(meta.get("protocol") or protocol_of(uri)).lower(),
+        str(meta.get("server") or "").lower(),
+        str(meta.get("port") or ""),
+        str(meta.get("credential") or "").lower(),
+        str(meta.get("network") or "").lower(),
+        str(meta.get("host") or "").lower(),
+        str(meta.get("sni") or "").lower(),
+        str(meta.get("path") or ""),
+    ]
+    if not parts[1] or not parts[2]:
+        return hashlib.sha256(str(uri or "").encode("utf-8")).hexdigest()
+    return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()
+
+
+def uri_hash(uri: str) -> str:
+    return hashlib.sha256(str(uri or "").encode("utf-8")).hexdigest()
+
+
+def is_cf_candidate_uri(uri: str, repo: str = "", source: str = "") -> bool:
+    text = " ".join([str(uri or ""), str(repo or ""), str(source or "")]).lower()
+    if str(repo or "") in CF_SOURCE_REPOS or str(repo or "") in CF_REFERENCE_REPOS:
+        return True
+    if any(keyword in text for keyword in CF_KEYWORDS):
+        return True
+    if re.search(r"(^|[^a-z0-9])cf([^a-z0-9]|$)", text):
+        return True
+    return False
 
 
 ASIA_COUNTRIES = {
@@ -223,11 +339,31 @@ class NodeDatabase:
                 seconds REAL NOT NULL DEFAULT 0,
                 proxy_ips TEXT NOT NULL DEFAULT '',
                 country TEXT NOT NULL DEFAULT '',
+                node_fingerprint TEXT NOT NULL DEFAULT '',
+                source_type TEXT NOT NULL DEFAULT 'validator',
+                manual_added INTEGER NOT NULL DEFAULT 0,
+                manual_disabled INTEGER NOT NULL DEFAULT 0,
+                manual_note TEXT NOT NULL DEFAULT '',
+                disabled_at TEXT,
+                disabled_reason TEXT NOT NULL DEFAULT '',
+                cf_candidate INTEGER NOT NULL DEFAULT 0,
                 first_validated TEXT NOT NULL DEFAULT (datetime('now', '+8 hours')),
                 last_validated TEXT NOT NULL DEFAULT (datetime('now', '+8 hours')),
                 validation_count INTEGER NOT NULL DEFAULT 1
             );
             CREATE INDEX IF NOT EXISTS "有效节点_协议" ON "有效节点" (protocol);
+            CREATE TABLE IF NOT EXISTS manual_blocked_nodes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                node_fingerprint TEXT NOT NULL UNIQUE,
+                uri_hash TEXT NOT NULL DEFAULT '',
+                protocol TEXT NOT NULL DEFAULT '',
+                server TEXT NOT NULL DEFAULT '',
+                port TEXT NOT NULL DEFAULT '',
+                reason TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_manual_blocked_nodes_protocol ON manual_blocked_nodes (protocol, server, port);
 
             CREATE TABLE IF NOT EXISTS "无效节点" (
                 uri TEXT PRIMARY KEY,
@@ -531,8 +667,22 @@ class NodeDatabase:
             if name not in columns:
                 self.connection.execute('ALTER TABLE "节点库" ADD COLUMN "' + name + '" ' + declaration)
         valid_columns = {row[1] for row in self.connection.execute('PRAGMA table_info("有效节点")')}
-        if "country" not in valid_columns:
-            self.connection.execute('ALTER TABLE "有效节点" ADD COLUMN "country" TEXT NOT NULL DEFAULT ""')
+        valid_migrations = {
+            "country": 'TEXT NOT NULL DEFAULT ""',
+            "node_fingerprint": 'TEXT NOT NULL DEFAULT ""',
+            "source_type": "TEXT NOT NULL DEFAULT 'validator'",
+            "manual_added": "INTEGER NOT NULL DEFAULT 0",
+            "manual_disabled": "INTEGER NOT NULL DEFAULT 0",
+            "manual_note": 'TEXT NOT NULL DEFAULT ""',
+            "disabled_at": "TEXT",
+            "disabled_reason": 'TEXT NOT NULL DEFAULT ""',
+            "cf_candidate": "INTEGER NOT NULL DEFAULT 0",
+        }
+        for name, declaration in valid_migrations.items():
+            if name not in valid_columns:
+                self.connection.execute('ALTER TABLE "有效节点" ADD COLUMN "' + name + '" ' + declaration)
+        self.connection.execute('CREATE INDEX IF NOT EXISTS idx_valid_nodes_fingerprint ON "有效节点" (node_fingerprint)')
+        self.connection.execute('CREATE INDEX IF NOT EXISTS idx_valid_nodes_manual_disabled ON "有效节点" (manual_disabled)')
         subscription_columns = {row[1] for row in self.connection.execute('PRAGMA table_info("订阅链接")')}
         if "export_limit" not in subscription_columns:
             self.connection.execute('ALTER TABLE "订阅链接" ADD COLUMN "export_limit" INTEGER NOT NULL DEFAULT 100')
@@ -719,7 +869,8 @@ class NodeDatabase:
             )
         existing = existing_pending | existing_verified
         duplicate_count = len(rows) - len(unique_rows) + len(existing)
-        upsert_rows = [row for row in unique_rows.values() if row[0] not in existing_verified]
+        blocked_uris = {uri for uri in unique_rows if self.is_node_blocked(uri)}
+        upsert_rows = [row for row in unique_rows.values() if row[0] not in existing_verified and row[0] not in blocked_uris]
         self.connection.executemany(self.NODE_UPSERT, upsert_rows)
         if duplicate_count:
             self.connection.execute(
@@ -732,11 +883,45 @@ class NodeDatabase:
         self.connection.commit()
         return {
             "parsed": len(rows),
-            "inserted": len(unique_rows) - len(existing),
-            "duplicates": duplicate_count,
+            "inserted": len(unique_rows) - len(existing) - len(blocked_uris),
+            "duplicates": duplicate_count + len(blocked_uris),
             "total": self.count("节点库"),
-            "inserted_uris": [uri for uri in unique_rows if uri not in existing],
+            "inserted_uris": [uri for uri in unique_rows if uri not in existing and uri not in blocked_uris],
         }
+
+    def is_node_blocked(self, uri: str) -> bool:
+        row = self.connection.execute(
+            "SELECT 1 FROM manual_blocked_nodes WHERE node_fingerprint = ?",
+            (node_fingerprint(uri),),
+        ).fetchone()
+        return bool(row)
+
+    def block_node(self, uri: str, reason: str = "") -> Dict[str, object]:
+        meta = uri_metadata(uri)
+        fingerprint = node_fingerprint(uri)
+        self.connection.execute(
+            """
+            INSERT INTO manual_blocked_nodes (
+                node_fingerprint, uri_hash, protocol, server, port, reason, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, BEIJING_TIMESTAMP(), BEIJING_TIMESTAMP())
+            ON CONFLICT(node_fingerprint) DO UPDATE SET
+                uri_hash = excluded.uri_hash,
+                protocol = excluded.protocol,
+                server = excluded.server,
+                port = excluded.port,
+                reason = excluded.reason,
+                updated_at = BEIJING_TIMESTAMP()
+            """,
+            (
+                fingerprint,
+                uri_hash(uri),
+                str(meta.get("protocol") or protocol_of(uri)),
+                str(meta.get("server") or ""),
+                str(meta.get("port") or ""),
+                str(reason or "")[:500],
+            ),
+        )
+        return {"node_fingerprint": fingerprint, **meta}
 
     def record_validation(
         self,
@@ -753,6 +938,10 @@ class NodeDatabase:
             'SELECT repo, source FROM "节点库" WHERE uri = ?',
             (uri,),
         ).fetchone()
+        fingerprint = node_fingerprint(uri)
+        meta = uri_metadata(uri)
+        source_repo = source_row[0] if source_row else ""
+        source_path = source_row[1] if source_row else ""
         if status == "无效":
             failure_category = classify_validation_failure(reason)
             if source_row:
@@ -769,6 +958,14 @@ class NodeDatabase:
             self.connection.execute('DELETE FROM "无效节点" WHERE uri = ?', (uri,))
             self.connection.execute('DELETE FROM "节点库" WHERE uri = ?', (uri,))
             self.connection.execute("DELETE FROM premium_subscription_pool WHERE uri = ?", (uri,))
+            self.connection.execute("DELETE FROM publish_subscription_pool WHERE uri = ?", (uri,))
+            self.connection.commit()
+            return
+        if self.is_node_blocked(uri):
+            self.connection.execute('DELETE FROM "节点库" WHERE uri = ?', (uri,))
+            self.connection.execute('DELETE FROM "有效节点" WHERE uri = ?', (uri,))
+            self.connection.execute("DELETE FROM premium_subscription_pool WHERE uri = ?", (uri,))
+            self.connection.execute("DELETE FROM publish_subscription_pool WHERE uri = ?", (uri,))
             self.connection.commit()
             return
         if source_row:
@@ -777,23 +974,207 @@ class NodeDatabase:
         self.connection.execute('DELETE FROM "无效节点" WHERE uri = ?', (uri,))
         self.connection.execute(
             """
-            INSERT INTO "有效节点" (uri, protocol, reason, seconds, proxy_ips, country, first_validated, last_validated)
-            VALUES (?, ?, ?, ?, ?, ?, BEIJING_TIMESTAMP(), BEIJING_TIMESTAMP())
+            INSERT INTO "有效节点" (
+                uri, protocol, reason, seconds, proxy_ips, country,
+                node_fingerprint, source_type, manual_added, manual_disabled,
+                manual_note, disabled_at, disabled_reason, cf_candidate,
+                first_validated, last_validated
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'validator', 0, 0, '', NULL, '', ?, BEIJING_TIMESTAMP(), BEIJING_TIMESTAMP())
             ON CONFLICT(uri) DO UPDATE SET
                 reason = excluded.reason,
                 seconds = excluded.seconds,
                 proxy_ips = excluded.proxy_ips,
                 country = excluded.country,
+                node_fingerprint = excluded.node_fingerprint,
+                source_type = CASE WHEN "有效节点".manual_added = 1 THEN "有效节点".source_type ELSE excluded.source_type END,
+                cf_candidate = excluded.cf_candidate,
                 last_validated = BEIJING_TIMESTAMP(),
                 validation_count = "有效节点".validation_count + 1
             """,
-            (uri, protocol_of(uri), reason, seconds, proxy_ips or "", country),
+            (
+                uri,
+                protocol_of(uri),
+                reason,
+                seconds,
+                proxy_ips or "",
+                country,
+                fingerprint,
+                1 if is_cf_candidate_uri(uri, source_repo, source_path) else 0,
+            ),
         )
         self.connection.execute('DELETE FROM "节点库" WHERE uri = ?', (uri,))
         self.connection.commit()
 
     def upsert_valid_node(self, uri: str, reason: str, seconds: float, proxy_ips: Optional[str] = None, country: str = "") -> None:
         self.record_validation(uri, "有效", reason, seconds, proxy_ips, country)
+
+    def validate_manual_node_uri(self, uri: str) -> Tuple[bool, str, Dict[str, object]]:
+        uri = str(uri or "").strip()
+        if not uri:
+            return False, "空行", {}
+        protocol = protocol_of(uri)
+        if protocol not in {"vmess", "vless", "trojan", "ss", "ssr"}:
+            return False, "不支持的协议", {"protocol": protocol}
+        meta = uri_metadata(uri)
+        if not meta.get("server"):
+            return False, "缺少 server", meta
+        if not meta.get("port"):
+            return False, "缺少 port", meta
+        if not meta.get("uuid_present"):
+            return False, "缺少 uuid/password", meta
+        if self.is_node_blocked(uri):
+            return False, "节点已被手动禁用", meta
+        return True, "ok", meta
+
+    def import_manual_valid_nodes(self, text: str, note: str = "") -> Dict[str, object]:
+        raw_lines = [line.strip() for line in str(text or "").splitlines()]
+        lines = [line for line in raw_lines if line and not line.lstrip().startswith("#")]
+        added = []
+        duplicates = []
+        invalid = []
+        seen_fingerprints = set()
+        for line in lines:
+            ok, reason, meta = self.validate_manual_node_uri(line)
+            fingerprint = node_fingerprint(line)
+            if not ok:
+                invalid.append({"uri": line, "reason": reason})
+                continue
+            if fingerprint in seen_fingerprints:
+                duplicates.append({"uri": line, "reason": "本次导入重复"})
+                continue
+            seen_fingerprints.add(fingerprint)
+            exists = self.connection.execute(
+                'SELECT uri FROM "有效节点" WHERE node_fingerprint = ? AND manual_disabled = 0',
+                (fingerprint,),
+            ).fetchone()
+            if exists:
+                duplicates.append({"uri": line, "reason": "有效节点库已存在"})
+                continue
+            self.connection.execute(
+                """
+                INSERT INTO "有效节点" (
+                    uri, protocol, reason, seconds, proxy_ips, country,
+                    node_fingerprint, source_type, manual_added, manual_disabled,
+                    manual_note, disabled_at, disabled_reason, cf_candidate,
+                    first_validated, last_validated, validation_count
+                ) VALUES (?, ?, ?, 0, '', '', ?, 'manual', 1, 0, ?, NULL, '', ?, BEIJING_TIMESTAMP(), BEIJING_TIMESTAMP(), 1)
+                ON CONFLICT(uri) DO UPDATE SET
+                    reason = excluded.reason,
+                    node_fingerprint = excluded.node_fingerprint,
+                    source_type = 'manual',
+                    manual_added = 1,
+                    manual_disabled = 0,
+                    manual_note = excluded.manual_note,
+                    disabled_at = NULL,
+                    disabled_reason = '',
+                    cf_candidate = excluded.cf_candidate,
+                    last_validated = BEIJING_TIMESTAMP()
+                """,
+                (
+                    line,
+                    str(meta.get("protocol") or protocol_of(line)),
+                    "manual_node_add",
+                    fingerprint,
+                    str(note or "")[:500],
+                    1 if is_cf_candidate_uri(line) else 0,
+                ),
+            )
+            added.append({
+                "uri": line,
+                "protocol": str(meta.get("protocol") or protocol_of(line)),
+                "server": str(meta.get("server") or ""),
+                "port": str(meta.get("port") or ""),
+                "node_fingerprint": fingerprint,
+            })
+        self.connection.commit()
+        return {
+            "added_count": len(added),
+            "duplicate_count": len(duplicates),
+            "invalid_count": len(invalid),
+            "added": added,
+            "duplicates": duplicates,
+            "invalid": invalid,
+            "operator": "admin",
+            "event": "manual_node_add",
+        }
+
+    def _remove_node_from_pools(self, uri: str) -> Dict[str, object]:
+        premium = self.connection.execute("DELETE FROM premium_subscription_pool WHERE uri = ?", (uri,)).rowcount
+        publish = self.connection.execute("DELETE FROM publish_subscription_pool WHERE uri = ?", (uri,)).rowcount
+        cache = self.connection.execute("DELETE FROM subscription_conversion_cache").rowcount
+        return {
+            "removed_from_premium_pool": bool(premium),
+            "removed_from_publish_pool": bool(publish),
+            "conversion_cache_cleared": True,
+            "cleared_conversion_cache_rows": int(cache or 0),
+        }
+
+    def disable_valid_node(self, uri: str, reason: str = "") -> Dict[str, object]:
+        uri = str(uri or "").strip()
+        row = self.connection.execute(
+            'SELECT uri, protocol FROM "有效节点" WHERE uri = ?',
+            (uri,),
+        ).fetchone()
+        if not row:
+            raise ValueError("有效节点不存在")
+        meta = self.block_node(uri, reason or "manual_node_disable")
+        self.connection.execute(
+            """
+            UPDATE "有效节点"
+            SET manual_disabled = 1,
+                disabled_at = BEIJING_TIMESTAMP(),
+                disabled_reason = ?,
+                manual_note = CASE WHEN manual_note = '' THEN ? ELSE manual_note END
+            WHERE uri = ?
+            """,
+            (str(reason or "manual_node_disable")[:500], str(reason or "manual_node_disable")[:500], uri),
+        )
+        details = self._remove_node_from_pools(uri)
+        self.connection.commit()
+        return {
+            "event": "manual_node_disable",
+            "uri": uri,
+            "protocol": str(row[1]),
+            "server": str(meta.get("server") or ""),
+            "port": str(meta.get("port") or ""),
+            **details,
+        }
+
+    def delete_valid_node(self, uri: str, reason: str = "") -> Dict[str, object]:
+        uri = str(uri or "").strip()
+        row = self.connection.execute(
+            'SELECT uri, protocol FROM "有效节点" WHERE uri = ?',
+            (uri,),
+        ).fetchone()
+        if not row:
+            raise ValueError("有效节点不存在")
+        meta = self.block_node(uri, reason or "manual_node_delete")
+        deleted = self.connection.execute('DELETE FROM "有效节点" WHERE uri = ?', (uri,)).rowcount
+        details = self._remove_node_from_pools(uri)
+        self.connection.commit()
+        return {
+            "event": "manual_node_delete",
+            "uri": uri,
+            "deleted": bool(deleted),
+            "protocol": str(row[1]),
+            "server": str(meta.get("server") or ""),
+            "port": str(meta.get("port") or ""),
+            **details,
+        }
+
+    def remove_from_premium_pool(self, uri: str) -> Dict[str, object]:
+        uri = str(uri or "").strip()
+        removed = self.connection.execute("DELETE FROM premium_subscription_pool WHERE uri = ?", (uri,)).rowcount
+        cache = self.connection.execute("DELETE FROM subscription_conversion_cache").rowcount
+        self.connection.commit()
+        return {
+            "event": "manual_node_remove_premium",
+            "uri": uri,
+            "removed_from_premium_pool": bool(removed),
+            "conversion_cache_cleared": True,
+            "cleared_conversion_cache_rows": int(cache or 0),
+        }
 
     def count(self, table: str) -> int:
         if table not in ("节点库", "有效节点", "无效节点"):
@@ -851,7 +1232,7 @@ class NodeDatabase:
             'SELECT validation_status, COUNT(*) FROM "节点库" GROUP BY validation_status'
         ))
         pending_count = self.count("节点库")
-        valid_count = self.count("有效节点")
+        valid_count = self.connection.execute('SELECT COUNT(*) FROM "有效节点" WHERE manual_disabled = 0').fetchone()[0]
         invalid_count = self.count("无效节点")
         premium_count = self.connection.execute("SELECT COUNT(*) FROM premium_subscription_pool").fetchone()[0]
         publish_count = self.connection.execute(
@@ -895,6 +1276,10 @@ class NodeDatabase:
             details["valid_nodes"] = int(cursor.rowcount or 0)
             cursor = self.connection.execute("DELETE FROM premium_subscription_pool")
             details["premium_subscription_pool"] = int(cursor.rowcount or 0)
+            cursor = self.connection.execute("DELETE FROM publish_subscription_pool")
+            details["publish_subscription_pool"] = int(cursor.rowcount or 0)
+            cursor = self.connection.execute("DELETE FROM subscription_conversion_cache")
+            details["subscription_conversion_cache"] = int(cursor.rowcount or 0)
         self.connection.commit()
         return details
 
@@ -1638,21 +2023,21 @@ class NodeDatabase:
         if country:
             clauses.append("country LIKE ?")
             params.append("%" + country.upper() + "%")
-        sql = 'SELECT COUNT(*) FROM "有效节点"'
+        sql = 'SELECT COUNT(*) FROM "有效节点" WHERE manual_disabled = 0'
         if clauses:
-            sql += " WHERE " + " AND ".join(clauses)
+            sql += " AND " + " AND ".join(clauses)
         return self.connection.execute(sql, params).fetchone()[0]
 
     def valid_node_protocols(self) -> List[str]:
         return [
             row[0] for row in self.connection.execute(
-                'SELECT protocol FROM "有效节点" GROUP BY protocol ORDER BY protocol'
+                'SELECT protocol FROM "有效节点" WHERE manual_disabled = 0 GROUP BY protocol ORDER BY protocol'
             )
         ]
 
     def valid_node_countries(self) -> List[str]:
         countries = set()
-        for row in self.connection.execute('SELECT country FROM "有效节点" WHERE country != ""'):
+        for row in self.connection.execute('SELECT country FROM "有效节点" WHERE manual_disabled = 0 AND country != ""'):
             for country in row[0].split(","):
                 country = country.strip().upper()
                 if country:
@@ -1660,6 +2045,7 @@ class NodeDatabase:
         return sorted(countries)
 
     def _valid_node_row(self, row) -> Dict[str, object]:
+        meta = uri_metadata(str(row[0]))
         item = {
             "uri": row[0],
             "protocol": row[1],
@@ -1668,11 +2054,28 @@ class NodeDatabase:
             "last_validated": row[4],
             "validation_count": row[5],
             "country": row[6],
+            "node_fingerprint": row[7] if len(row) > 7 else node_fingerprint(str(row[0])),
+            "source_type": row[8] if len(row) > 8 else "validator",
+            "manual_added": bool(row[9]) if len(row) > 9 else False,
+            "manual_disabled": bool(row[10]) if len(row) > 10 else False,
+            "manual_note": row[11] if len(row) > 11 else "",
+            "disabled_at": row[12] if len(row) > 12 else "",
+            "disabled_reason": row[13] if len(row) > 13 else "",
+            "cf_candidate": bool(row[14]) if len(row) > 14 else is_cf_candidate_uri(str(row[0])),
             "quality_score": node_quality_score(row[3], row[5], row[6]),
             "asia": is_asia_country(row[6]),
+            "server": str(meta.get("server") or ""),
+            "port": str(meta.get("port") or ""),
+            "network": str(meta.get("network") or ""),
+            "tls": bool(meta.get("tls")),
         }
         item["publish_region"] = publish_region(item)
         item["publishable"] = is_publishable_region(item)
+        pub = self.connection.execute(
+            "SELECT publish_enabled, manual_status FROM publish_subscription_pool WHERE uri = ?",
+            (str(row[0]),),
+        ).fetchone()
+        item["published"] = bool(pub and int(pub[0] or 0) == 1 and str(pub[1]) == "publishable")
         return item
 
     def valid_nodes(
@@ -1692,11 +2095,14 @@ class NodeDatabase:
             clauses.append("country LIKE ?")
             params.append("%" + country.upper() + "%")
         sql = """
-            SELECT uri, protocol, proxy_ips, seconds, last_validated, validation_count, country
+            SELECT uri, protocol, proxy_ips, seconds, last_validated, validation_count, country,
+                   node_fingerprint, source_type, manual_added, manual_disabled, manual_note,
+                   disabled_at, disabled_reason, cf_candidate
             FROM "有效节点"
+            WHERE manual_disabled = 0
         """
         if clauses:
-            sql += " WHERE " + " AND ".join(clauses)
+            sql += " AND " + " AND ".join(clauses)
         if quality_order:
             sql += """
                 ORDER BY seconds ASC, validation_count DESC, last_validated DESC, rowid DESC
@@ -1713,8 +2119,11 @@ class NodeDatabase:
     def all_valid_nodes(self, limit: Optional[int] = None, quality_order: bool = False) -> List[Dict[str, object]]:
         order = "ORDER BY seconds ASC, validation_count DESC, last_validated DESC, rowid DESC" if quality_order else "ORDER BY last_validated DESC, rowid DESC"
         sql = """
-            SELECT uri, protocol, proxy_ips, seconds, last_validated, validation_count, country
+            SELECT uri, protocol, proxy_ips, seconds, last_validated, validation_count, country,
+                   node_fingerprint, source_type, manual_added, manual_disabled, manual_note,
+                   disabled_at, disabled_reason, cf_candidate
             FROM "有效节点"
+            WHERE manual_disabled = 0
         """ + order
         params = []
         if limit is not None:
@@ -1909,13 +2318,16 @@ class NodeDatabase:
         rows = self.connection.execute(
             """
             SELECT v.uri, v.protocol, v.proxy_ips, v.seconds, v.last_validated, v.validation_count,
-                   v.country, p.score, p.reason,
+                   v.country, v.node_fingerprint, v.source_type, v.manual_added, v.manual_disabled,
+                   v.manual_note, v.disabled_at, v.disabled_reason, v.cf_candidate,
+                   p.score, p.reason,
                    COALESCE(pub.manual_status, '') AS manual_status,
                    COALESCE(pub.publish_enabled, 0) AS publish_enabled,
                    COALESCE(pub.manual_note, '') AS manual_note
             FROM premium_subscription_pool p
             JOIN "有效节点" v ON v.uri = p.uri
             LEFT JOIN publish_subscription_pool pub ON pub.uri = v.uri
+            WHERE v.manual_disabled = 0
             ORDER BY p.score DESC, v.seconds ASC, v.validation_count DESC, p.updated_at DESC
             LIMIT ?
             """,
@@ -1923,12 +2335,12 @@ class NodeDatabase:
         ).fetchall()
         candidates = []
         for row in rows:
-            item = self._valid_node_row(row[:7])
-            item["premium_score"] = row[7]
-            item["premium_reason"] = row[8]
-            item["manual_status"] = row[9] or ""
-            item["publish_enabled"] = bool(row[10])
-            item["manual_note"] = row[11] or ""
+            item = self._valid_node_row(row[:15])
+            item["premium_score"] = row[15]
+            item["premium_reason"] = row[16]
+            item["manual_status"] = row[17] or ""
+            item["publish_enabled"] = bool(row[18])
+            item["manual_note"] = row[19] or item.get("manual_note") or ""
             item.update(uri_metadata(str(item["uri"])))
             candidates.append(self._publish_display_row(item))
         published = self.publish_pool_nodes(200)
@@ -1957,6 +2369,10 @@ class NodeDatabase:
             "manual_status": str(row.get("manual_status") or ""),
             "publish_enabled": bool(row.get("publish_enabled")),
             "manual_note": str(row.get("manual_note") or ""),
+            "source_type": str(row.get("source_type") or ""),
+            "manual_added": bool(row.get("manual_added")),
+            "manual_disabled": bool(row.get("manual_disabled")),
+            "cf_candidate": bool(row.get("cf_candidate")),
             "publish_compatible": bool(row.get("publish_compatible")),
             "publish_block_reason": str(row.get("publish_block_reason") or ""),
         }
@@ -1965,6 +2381,16 @@ class NodeDatabase:
         uri = str(uri or "").strip()
         if not uri:
             raise ValueError("missing uri")
+        valid_row = self.connection.execute(
+            'SELECT manual_disabled FROM "有效节点" WHERE uri = ?',
+            (uri,),
+        ).fetchone()
+        if not valid_row:
+            raise ValueError("有效节点不存在")
+        if int(valid_row[0] or 0):
+            raise ValueError("节点已禁用，不能发布")
+        if self.is_node_blocked(uri):
+            raise ValueError("节点已被手动禁用，不能发布")
         meta = uri_metadata(uri)
         status = "publishable" if publishable else "rejected"
         enabled = 1 if publishable else 0
@@ -1997,16 +2423,19 @@ class NodeDatabase:
                 str(note or "")[:500],
             ),
         )
+        self.connection.execute("DELETE FROM subscription_conversion_cache")
         self.connection.commit()
         return {"uri": uri, "manual_status": status, "publish_enabled": bool(enabled), **meta}
 
     def remove_publish_node(self, uri: str) -> bool:
         cursor = self.connection.execute("DELETE FROM publish_subscription_pool WHERE uri = ?", (str(uri or ""),))
+        self.connection.execute("DELETE FROM subscription_conversion_cache")
         self.connection.commit()
         return bool(cursor.rowcount)
 
     def clear_publish_pool(self) -> int:
         cursor = self.connection.execute("DELETE FROM publish_subscription_pool")
+        self.connection.execute("DELETE FROM subscription_conversion_cache")
         self.connection.commit()
         return int(cursor.rowcount or 0)
 
@@ -2015,10 +2444,12 @@ class NodeDatabase:
         rows = self.connection.execute(
             """
             SELECT v.uri, v.protocol, v.proxy_ips, v.seconds, v.last_validated, v.validation_count,
-                   v.country, pub.manual_status, pub.manual_note, pub.updated_at
+                   v.country, v.node_fingerprint, v.source_type, v.manual_added, v.manual_disabled,
+                   v.manual_note, v.disabled_at, v.disabled_reason, v.cf_candidate,
+                   pub.manual_status, pub.manual_note, pub.updated_at
             FROM publish_subscription_pool pub
             JOIN "有效节点" v ON v.uri = pub.uri
-            WHERE pub.publish_enabled = 1 AND pub.manual_status = 'publishable'
+            WHERE pub.publish_enabled = 1 AND pub.manual_status = 'publishable' AND v.manual_disabled = 0
             ORDER BY pub.updated_at DESC, v.seconds ASC, v.validation_count DESC
             LIMIT ?
             """,
@@ -2026,14 +2457,14 @@ class NodeDatabase:
         ).fetchall()
         result = []
         for row in rows:
-            item = self._valid_node_row(row[:7])
+            item = self._valid_node_row(row[:15])
             meta = uri_metadata(str(item["uri"]))
             if not meta.get("publish_compatible"):
                 continue
             item["source_pool"] = "publish_pool"
-            item["manual_status"] = row[7]
-            item["manual_note"] = row[8]
-            item["publish_updated_at"] = row[9]
+            item["manual_status"] = row[15]
+            item["manual_note"] = row[16]
+            item["publish_updated_at"] = row[17]
             result.append(item)
         return final_subscription_nodes(result, limit)
 

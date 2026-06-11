@@ -951,6 +951,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return self.send_json({"template": template, "count": len(rows), "nodes": rows})
         if route == "/api/node-processing/export":
             return self.send_json({"error": "有效节点处理页不再生成订阅，请到订阅链接管理生成带 token 的订阅链接"}, HTTPStatus.GONE)
+        if route == "/api/valid-nodes/manual-import":
+            return self.import_manual_valid_nodes(payload)
+        if route == "/api/valid-nodes/disable":
+            return self.disable_valid_node(payload)
+        if route == "/api/valid-nodes/delete":
+            return self.delete_valid_node(payload)
+        if route == "/api/valid-nodes/remove-premium":
+            return self.remove_valid_node_premium(payload)
         if route == "/api/nodes/clear":
             return self.clear_node_pool(payload)
         if route == "/api/logs/clear":
@@ -1324,6 +1332,62 @@ class DashboardHandler(BaseHTTPRequestHandler):
             overview = database.publish_pool_candidates()
         LOG_BUS.emit("subscription", "发布池已清空 | removed=" + str(removed), "warning")
         return self.send_json({"removed": removed, **overview})
+
+    def import_manual_valid_nodes(self, payload: dict) -> None:
+        text = str(payload.get("nodes") or payload.get("text") or "").strip()
+        note = str(payload.get("note") or "").strip()
+        if not text:
+            return self.send_json({"error": "请粘贴节点链接"}, HTTPStatus.BAD_REQUEST)
+        with NodeDatabase(DATABASE) as database:
+            result = database.import_manual_valid_nodes(text, note)
+            stats = database.stats()
+        LOG_BUS.emit(
+            "validator",
+            "manual_node_add | added_count=" + str(result["added_count"]) +
+            " duplicate_count=" + str(result["duplicate_count"]) +
+            " invalid_count=" + str(result["invalid_count"]) +
+            " operator=admin",
+            "success" if result["added_count"] else "warning",
+        )
+        return self.send_json({"result": result, "database": stats})
+
+    def disable_valid_node(self, payload: dict) -> None:
+        uri = str(payload.get("uri") or "").strip()
+        reason = str(payload.get("reason") or "manual_node_disable").strip()
+        if not uri:
+            return self.send_json({"error": "缺少节点标识"}, HTTPStatus.BAD_REQUEST)
+        try:
+            with NodeDatabase(DATABASE) as database:
+                result = database.disable_valid_node(uri, reason)
+                stats = database.stats()
+        except ValueError as exc:
+            return self.send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+        LOG_BUS.emit("validator", "manual_node_disable | protocol=" + result["protocol"] + " server=" + result["server"] + " port=" + result["port"] + " removed_from_premium_pool=" + str(result["removed_from_premium_pool"]) + " removed_from_publish_pool=" + str(result["removed_from_publish_pool"]) + " conversion_cache_cleared=true", "warning")
+        return self.send_json({"result": result, "database": stats})
+
+    def delete_valid_node(self, payload: dict) -> None:
+        uri = str(payload.get("uri") or "").strip()
+        reason = str(payload.get("reason") or "manual_node_delete").strip()
+        if not uri:
+            return self.send_json({"error": "缺少节点标识"}, HTTPStatus.BAD_REQUEST)
+        try:
+            with NodeDatabase(DATABASE) as database:
+                result = database.delete_valid_node(uri, reason)
+                stats = database.stats()
+        except ValueError as exc:
+            return self.send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+        LOG_BUS.emit("validator", "manual_node_delete | protocol=" + result["protocol"] + " server=" + result["server"] + " port=" + result["port"] + " removed_from_premium_pool=" + str(result["removed_from_premium_pool"]) + " removed_from_publish_pool=" + str(result["removed_from_publish_pool"]) + " conversion_cache_cleared=true", "warning")
+        return self.send_json({"result": result, "database": stats})
+
+    def remove_valid_node_premium(self, payload: dict) -> None:
+        uri = str(payload.get("uri") or "").strip()
+        if not uri:
+            return self.send_json({"error": "缺少节点标识"}, HTTPStatus.BAD_REQUEST)
+        with NodeDatabase(DATABASE) as database:
+            result = database.remove_from_premium_pool(uri)
+            stats = database.stats()
+        LOG_BUS.emit("validator", "manual_node_remove_premium | removed_from_premium_pool=" + str(result["removed_from_premium_pool"]) + " conversion_cache_cleared=true", "info")
+        return self.send_json({"result": result, "database": stats})
 
     def subscription_content_type(self, target_id: str) -> str:
         if target_id == "sing-box":

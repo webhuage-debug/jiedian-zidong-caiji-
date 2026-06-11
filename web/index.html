@@ -909,6 +909,21 @@
             <button class="ghost" id="refreshNodes">刷新</button>
           </div>
         </div>
+        <div class="notice-card">手动添加节点只进入有效节点库，不会自动发布给粉丝。需要本地测试后再点“标记可发布”。</div>
+        <div class="form-grid two">
+          <label>批量粘贴节点
+            <small>支持一行一个 vmess/vless/trojan/ss/ssr 原始节点链接。</small>
+            <textarea id="manualNodeInput" spellcheck="false" placeholder="vless://...\nvmess://..."></textarea>
+          </label>
+          <label>手动备注
+            <small>可填写来源、测试结果或操作说明。</small>
+            <textarea id="manualNodeNote" spellcheck="false" placeholder="例如：华哥本地测试候选"></textarea>
+          </label>
+        </div>
+        <div class="actions">
+          <button class="primary" id="importManualNodes">导入到有效节点库</button>
+          <span class="hint" id="manualNodeImportSummary">手动节点不会绕过发布池。</span>
+        </div>
         <div class="node-list" id="nodeList"></div>
         <div class="pagination">
           <button class="ghost" id="previousPage">上一页</button>

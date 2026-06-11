@@ -38,6 +38,13 @@ DEFAULT_REPOS = [
     "mahdibland/V2RayAggregator",
     "ShatakVPN/ConfigForge-V2Ray",
     "V2RayRoot/V2RayConfig",
+    "free-nodes/v2rayfree",
+    "zengfr/free-vpn-subscribe",
+    "FreeFolksOn/abc-configs-free-vpn-proxy-list",
+    "mehdirzfx/v2ray-sub",
+    "NiREvil/vless",
+    "mermeroo/V2RAY-CLASH-BASE64-Subscription.Links",
+    "Surfboardv2ray/v2ray-worker-sub",
 ]
 
 NODE_SCHEMES = (

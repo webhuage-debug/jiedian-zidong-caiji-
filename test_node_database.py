@@ -5,7 +5,8 @@ import sqlite3
 from pathlib import Path
 from unittest.mock import patch
 
-from node_database import NodeDatabase, classify_validation_failure
+from node_collector import DEFAULT_REPOS
+from node_database import NodeDatabase, classify_validation_failure, is_cf_candidate_uri
 
 
 class NodeDatabaseTest(unittest.TestCase):
@@ -358,6 +359,94 @@ class NodeDatabaseTest(unittest.TestCase):
 
                 database.mark_publish_node(publish_uri, False)
                 self.assertEqual(database.export_publish_subscription_nodes(10), [])
+
+    def test_manual_import_valid_nodes_deduplicates_and_rejects_bad_lines(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "nodes.db"
+            with NodeDatabase(path) as database:
+                text = "\n".join([
+                    "vless://manual-uuid@example.com:443?type=ws&security=tls#HK",
+                    "vless://manual-uuid@example.com:443?security=tls&type=ws#same-node",
+                    "https://not-a-node.example.com",
+                    "trojan://secret@trojan.example.com:443#SG",
+                ])
+                result = database.import_manual_valid_nodes(text, "local test")
+
+                self.assertEqual(result["added_count"], 2)
+                self.assertEqual(result["duplicate_count"], 1)
+                self.assertEqual(result["invalid_count"], 1)
+                rows = database.valid_nodes(10)
+                self.assertEqual(len(rows), 2)
+                self.assertTrue(all(row["manual_added"] for row in rows))
+                self.assertTrue(all(row["source_type"] == "manual" for row in rows))
+                self.assertEqual(database.export_publish_subscription_nodes(10), [])
+
+    def test_manual_disable_removes_premium_publish_cache_and_blocks_revalidation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "nodes.db"
+            uri = "vless://disable-me@example.com:443?type=ws&security=tls#HK"
+            with NodeDatabase(path) as database:
+                database.upsert_valid_node(uri, "ok", 0.1, "203.0.113.50", "HK")
+                database.refresh_premium_subscription_pool(10)
+                database.mark_publish_node(uri, True)
+                database.subscription_conversion_cache_put({
+                    "cache_key": "cache-disable",
+                    "claim_code_version": "v1",
+                    "target_id": "clash-verge",
+                    "target_name": "Clash Verge",
+                    "node_hash": "hash",
+                    "input_mode": "subscription_link",
+                    "input_type": "mixed",
+                    "export_limit": 10,
+                    "prefer_asia": True,
+                    "backend_url": "http://127.0.0.1:3001",
+                    "profile_name": "sub",
+                    "content": "old",
+                    "output_bytes": 3,
+                })
+
+                result = database.disable_valid_node(uri, "bad local test")
+
+                self.assertTrue(result["removed_from_premium_pool"])
+                self.assertTrue(result["removed_from_publish_pool"])
+                self.assertTrue(result["conversion_cache_cleared"])
+                self.assertEqual(database.valid_node_count(), 0)
+                self.assertEqual(database.publish_pool_count(), 0)
+                self.assertEqual(database.subscription_conversion_cache_stats()["rows"], 0)
+
+                database.upsert_node(uri, "owner/repo", "nodes.txt", "plain")
+                database.record_validation(uri, "有效", "ok again", 0.1, "203.0.113.50", "HK")
+                self.assertEqual(database.valid_node_count(), 0)
+                self.assertEqual(database.export_subscription_nodes(10), [])
+
+    def test_manual_delete_removes_valid_premium_publish_and_cache(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "nodes.db"
+            uri = "trojan://secret@delete-me.example.com:443#SG"
+            with NodeDatabase(path) as database:
+                database.upsert_valid_node(uri, "ok", 0.1, "203.0.113.51", "SG")
+                database.refresh_premium_subscription_pool(10)
+                database.mark_publish_node(uri, True)
+                result = database.delete_valid_node(uri, "manual delete")
+
+                self.assertTrue(result["deleted"])
+                self.assertEqual(database.valid_node_count(), 0)
+                self.assertEqual(database.publish_pool_count(), 0)
+                self.assertEqual(database.connection.execute("SELECT COUNT(*) FROM premium_subscription_pool").fetchone()[0], 0)
+
+    def test_cf_candidate_sources_are_added_and_marked_without_auto_publish(self):
+        self.assertIn("Surfboardv2ray/v2ray-worker-sub", DEFAULT_REPOS)
+        self.assertTrue(is_cf_candidate_uri("vless://uuid@example.com:443?host=demo.pages.dev&type=ws#CF"))
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "nodes.db"
+            uri = "vless://cf-uuid@worker.example.com:443?type=ws&host=demo.workers.dev&security=tls#CF"
+            with NodeDatabase(path) as database:
+                database.upsert_node(uri, "Surfboardv2ray/v2ray-worker-sub", "sub.txt", "plain")
+                database.record_validation(uri, "有效", "ok", 0.1, "203.0.113.52", "HK")
+                row = database.valid_nodes(1)[0]
+                self.assertTrue(row["cf_candidate"])
+                database.refresh_premium_subscription_pool(10)
+                self.assertEqual(database.publish_pool_count(), 0)
 
     def test_stores_bot_config_verification_and_message_log(self):
         with tempfile.TemporaryDirectory() as directory:
