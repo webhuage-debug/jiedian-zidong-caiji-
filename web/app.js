@@ -1156,7 +1156,7 @@ async function importManualNodes() {
       }),
     });
     const result = data.result || {};
-    setText("manualNodeImportSummary", `新增 ${result.added_count || 0}，重复 ${result.duplicate_count || 0}，无效 ${result.invalid_count || 0}`);
+    setText("manualNodeImportSummary", `新增 ${result.added_count || 0}，重复 ${result.duplicate_count || 0}，无效 ${result.invalid_count || 0}，解析订阅 ${result.subscription_url_count || 0}，Base64 解码 ${result.base64_decoded_count || 0}，提取节点 ${result.extracted_count || 0}`);
     if (result.invalid?.length) {
       toast(`有 ${result.invalid.length} 条格式错误，已拒绝入库`);
     } else {

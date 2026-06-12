@@ -7,9 +7,13 @@ import os
 import json
 import base64
 import hashlib
+import ipaddress
 import re
+import socket
 import sqlite3
 import urllib.parse
+import urllib.error
+import urllib.request
 from datetime import timedelta
 from pathlib import Path
 from typing import Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
@@ -225,6 +229,214 @@ ASIA_COUNTRIES = {
 
 def protocol_of(uri: str) -> str:
     return uri.split("://", 1)[0].lower() if "://" in uri else ""
+
+
+SUPPORTED_NODE_PROTOCOLS = {"vmess", "vless", "trojan", "ss", "ssr"}
+NODE_URI_RE = re.compile(r"(?i)\b(?:vmess|vless|trojan|ssr|ss)://[^\s<>'\"]+")
+BASE64_TEXT_RE = re.compile(r"^[A-Za-z0-9_\-+/=\s]+$")
+MAX_SUBSCRIPTION_IMPORT_BYTES = 2 * 1024 * 1024
+SUBSCRIPTION_IMPORT_TIMEOUT_SECONDS = 10
+SUBSCRIPTION_IMPORT_MAX_REDIRECTS = 3
+
+
+def is_supported_node_uri(value: str) -> bool:
+    return protocol_of(str(value or "").strip()) in SUPPORTED_NODE_PROTOCOLS
+
+
+def redact_url(value: str) -> str:
+    text = str(value or "").strip()
+    parsed = urllib.parse.urlsplit(text)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return text[:160]
+    query = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
+    sensitive = {"token", "key", "access_token", "password", "passwd", "auth", "secret"}
+    redacted_query = []
+    for key, item_value in query:
+        if key.lower() in sensitive or len(item_value) >= 16:
+            redacted_query.append((key, "***"))
+        else:
+            redacted_query.append((key, item_value))
+    return urllib.parse.urlunsplit((
+        parsed.scheme,
+        parsed.netloc,
+        parsed.path,
+        urllib.parse.urlencode(redacted_query, doseq=True),
+        "",
+    ))[:220]
+
+
+def safe_input_ref(value: str) -> str:
+    text = str(value or "").strip()
+    if text.lower().startswith(("http://", "https://")):
+        return redact_url(text)
+    if is_supported_node_uri(text):
+        return protocol_of(text) + "://***#" + hashlib.sha256(text.encode("utf-8")).hexdigest()[:8]
+    return text[:160]
+
+
+def _looks_like_base64(value: str) -> bool:
+    compact = re.sub(r"\s+", "", str(value or ""))
+    if len(compact) < 24 or not BASE64_TEXT_RE.match(compact):
+        return False
+    return len(compact) % 4 in {0, 2, 3}
+
+
+def decode_base64_subscription(value: str) -> Optional[str]:
+    compact = re.sub(r"\s+", "", str(value or ""))
+    if not compact:
+        return None
+    padding = "=" * (-len(compact) % 4)
+    for decoder in (base64.b64decode, base64.urlsafe_b64decode):
+        try:
+            decoded = decoder((compact + padding).encode("ascii"))
+            text = decoded.decode("utf-8", errors="ignore")
+        except Exception:
+            continue
+        if NODE_URI_RE.search(text):
+            return text
+    return None
+
+
+def extract_node_uris_from_text(value: str) -> List[str]:
+    result = []
+    seen = set()
+    for match in NODE_URI_RE.finditer(str(value or "")):
+        uri = match.group(0).strip().strip("`'\"<>")
+        if uri and uri not in seen:
+            seen.add(uri)
+            result.append(uri)
+    return result
+
+
+def _is_blocked_subscription_host(hostname: str) -> bool:
+    host = str(hostname or "").strip().strip("[]").lower()
+    if not host or host in {"localhost", "localhost.localdomain"} or host.endswith(".localhost"):
+        return True
+    try:
+        addresses = {socket.gethostbyname(host)}
+        for family, _, _, _, sockaddr in socket.getaddrinfo(host, None):
+            if family in (socket.AF_INET, socket.AF_INET6):
+                addresses.add(sockaddr[0])
+    except OSError:
+        return True
+    for address in addresses:
+        try:
+            ip = ipaddress.ip_address(address)
+        except ValueError:
+            return True
+        if (
+            ip.is_loopback
+            or ip.is_private
+            or ip.is_link_local
+            or ip.is_multicast
+            or ip.is_reserved
+            or ip.is_unspecified
+            or str(ip) == "169.254.169.254"
+        ):
+            return True
+    return False
+
+
+def validate_subscription_url(url: str) -> str:
+    text = str(url or "").strip()
+    parsed = urllib.parse.urlsplit(text)
+    if parsed.scheme not in {"http", "https"}:
+        raise ValueError("subscription url only supports http/https")
+    if not parsed.hostname or _is_blocked_subscription_host(parsed.hostname):
+        raise ValueError("subscription url host is not allowed")
+    return text
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def fetch_subscription_url(url: str) -> str:
+    current = validate_subscription_url(url)
+    opener = urllib.request.build_opener(_NoRedirect)
+    for _ in range(SUBSCRIPTION_IMPORT_MAX_REDIRECTS + 1):
+        request = urllib.request.Request(
+            current,
+            headers={"User-Agent": "HuageNodeAdmin/1.1 subscription-import"},
+        )
+        try:
+            with opener.open(request, timeout=SUBSCRIPTION_IMPORT_TIMEOUT_SECONDS) as response:
+                data = response.read(MAX_SUBSCRIPTION_IMPORT_BYTES + 1)
+                if len(data) > MAX_SUBSCRIPTION_IMPORT_BYTES:
+                    raise ValueError("subscription url response is too large")
+                charset = response.headers.get_content_charset() or "utf-8"
+                return data.decode(charset, errors="ignore")
+        except urllib.error.HTTPError as exc:
+            if exc.code in {301, 302, 303, 307, 308}:
+                location = exc.headers.get("Location")
+                if not location:
+                    raise ValueError("subscription url redirect missing location") from exc
+                current = validate_subscription_url(urllib.parse.urljoin(current, location))
+                continue
+            raise ValueError("subscription url request failed") from exc
+        except urllib.error.URLError as exc:
+            raise ValueError("subscription url request failed") from exc
+    raise ValueError("subscription url has too many redirects")
+
+
+def unpack_subscription_import_text(text: str) -> Dict[str, object]:
+    raw = str(text or "").strip()
+    extracted: List[str] = []
+    invalid: List[Dict[str, str]] = []
+    subscription_url_count = 0
+    base64_decoded_count = 0
+
+    def add_nodes(content: str) -> int:
+        before = len(extracted)
+        extracted.extend(extract_node_uris_from_text(content))
+        return len(extracted) - before
+
+    def decode_and_add(content: str) -> bool:
+        nonlocal base64_decoded_count
+        decoded = decode_base64_subscription(content)
+        if decoded is None:
+            return False
+        base64_decoded_count += 1
+        add_nodes(decoded)
+        return True
+
+    lines = [line.strip() for line in raw.splitlines() if line.strip() and not line.lstrip().startswith("#")]
+    for line in lines:
+        lower = line.lower()
+        if is_supported_node_uri(line):
+            extracted.append(line)
+            continue
+        if lower.startswith(("http://", "https://")):
+            subscription_url_count += 1
+            try:
+                body = fetch_subscription_url(line)
+            except ValueError as exc:
+                invalid.append({"input": redact_url(line), "reason": str(exc)})
+                continue
+            found = add_nodes(body)
+            decoded = decode_and_add(body)
+            if found == 0 and not decoded:
+                invalid.append({"input": redact_url(line), "reason": "subscription did not contain supported nodes"})
+            continue
+        if NODE_URI_RE.search(line):
+            add_nodes(line)
+            continue
+        if _looks_like_base64(line):
+            if not decode_and_add(line):
+                invalid.append({"input": safe_input_ref(line), "reason": "base64 decode failed"})
+            continue
+        invalid.append({"input": safe_input_ref(line), "reason": "unrecognized input"})
+
+    if len(lines) > 1 and _looks_like_base64(raw):
+        decode_and_add(raw)
+    return {
+        "nodes": extracted,
+        "invalid_inputs": invalid,
+        "subscription_url_count": subscription_url_count,
+        "base64_decoded_count": base64_decoded_count,
+        "extracted_count": len(extracted),
+    }
 
 
 def is_asia_country(country: str) -> bool:
@@ -1015,7 +1227,7 @@ class NodeDatabase:
         if not uri:
             return False, "空行", {}
         protocol = protocol_of(uri)
-        if protocol not in {"vmess", "vless", "trojan", "ss", "ssr"}:
+        if protocol not in SUPPORTED_NODE_PROTOCOLS:
             return False, "不支持的协议", {"protocol": protocol}
         meta = uri_metadata(uri)
         if not meta.get("server"):
@@ -1030,22 +1242,22 @@ class NodeDatabase:
 
     def import_manual_valid_nodes(self, text: str, note: str = "", source_type: str = "manual_normal") -> Dict[str, object]:
         source_type = str(source_type or "manual_normal").strip()
-        if source_type not in {"manual_cf", "manual_normal"}:
-            source_type = "manual_normal"
-        raw_lines = [line.strip() for line in str(text or "").splitlines()]
-        lines = [line for line in raw_lines if line and not line.lstrip().startswith("#")]
+        if source_type not in {"manual_cf", "manual_normal", "github_public", "unknown"}:
+            source_type = "unknown"
+        unpacked = unpack_subscription_import_text(text)
+        lines = [str(line or "").strip() for line in unpacked["nodes"] if str(line or "").strip()]
         added = []
         duplicates = []
-        invalid = []
+        invalid = list(unpacked["invalid_inputs"])
         seen_fingerprints = set()
         for line in lines:
             ok, reason, meta = self.validate_manual_node_uri(line)
             fingerprint = node_fingerprint(line)
             if not ok:
-                invalid.append({"uri": line, "reason": reason})
+                invalid.append({"input": safe_input_ref(line), "uri": safe_input_ref(line), "reason": reason})
                 continue
             if fingerprint in seen_fingerprints:
-                duplicates.append({"uri": line, "reason": "本次导入重复"})
+                duplicates.append({"input": safe_input_ref(line), "uri": safe_input_ref(line), "reason": "本次导入重复"})
                 continue
             seen_fingerprints.add(fingerprint)
             exists = self.connection.execute(
@@ -1053,7 +1265,7 @@ class NodeDatabase:
                 (fingerprint,),
             ).fetchone()
             if exists:
-                duplicates.append({"uri": line, "reason": "有效节点库已存在"})
+                duplicates.append({"input": safe_input_ref(line), "uri": safe_input_ref(line), "reason": "有效节点库已存在"})
                 continue
             self.connection.execute(
                 """
@@ -1103,6 +1315,9 @@ class NodeDatabase:
             "operator": "admin",
             "event": "manual_node_add",
             "source_type": source_type,
+            "subscription_url_count": int(unpacked["subscription_url_count"]),
+            "base64_decoded_count": int(unpacked["base64_decoded_count"]),
+            "extracted_count": int(unpacked["extracted_count"]),
         }
 
     def _remove_node_from_pools(self, uri: str) -> Dict[str, object]:

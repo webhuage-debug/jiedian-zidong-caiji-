@@ -540,6 +540,37 @@ class WebAppRoutingTest(unittest.TestCase):
             finally:
                 web_app.DATABASE = original_database
 
+    def test_manual_valid_node_api_imports_base64_subscription_without_publish(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "nodes.db"
+            original_database = web_app.DATABASE
+            try:
+                web_app.DATABASE = database_path
+                uri = "vless://33333333-3333-3333-3333-333333333333@api-cf.example.com:443?type=ws&host=demo.workers.dev&security=tls#CF"
+                encoded = base64.b64encode(uri.encode("utf-8")).decode("ascii").rstrip("=")
+                handler = object.__new__(DashboardHandler)
+                responses = []
+                handler.send_json = lambda payload, status=HTTPStatus.OK, headers=None: responses.append((payload, status))
+
+                handler.import_manual_valid_nodes({
+                    "nodes": encoded,
+                    "note": "华哥CF-API-Base64",
+                    "source_type": "manual_cf",
+                })
+
+                self.assertEqual(responses[-1][1], HTTPStatus.OK)
+                self.assertTrue(responses[-1][0]["ok"])
+                self.assertEqual(responses[-1][0]["added_count"], 1)
+                self.assertEqual(responses[-1][0]["base64_decoded_count"], 1)
+                self.assertEqual(responses[-1][0]["extracted_count"], 1)
+                with NodeDatabase(database_path) as database:
+                    self.assertEqual(database.publish_pool_count(), 0)
+                    rows = database.valid_nodes(10, group="manual_cf")
+                    self.assertEqual(len(rows), 1)
+                    self.assertEqual(rows[0]["manual_note"], "华哥CF-API-Base64")
+            finally:
+                web_app.DATABASE = original_database
+
     def test_valid_node_copy_api_returns_only_copyable_filtered_nodes(self):
         with tempfile.TemporaryDirectory() as directory:
             database_path = Path(directory) / "nodes.db"

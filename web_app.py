@@ -1350,10 +1350,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
             "manual_node_add | added_count=" + str(result["added_count"]) +
             " duplicate_count=" + str(result["duplicate_count"]) +
             " invalid_count=" + str(result["invalid_count"]) +
+            " subscription_url_count=" + str(result.get("subscription_url_count", 0)) +
+            " base64_decoded_count=" + str(result.get("base64_decoded_count", 0)) +
+            " extracted_count=" + str(result.get("extracted_count", 0)) +
+            " source_type=" + str(result.get("source_type", "")) +
             " operator=admin",
             "success" if result["added_count"] else "warning",
         )
-        return self.send_json({"result": result, "database": stats})
+        return self.send_json({"ok": True, **result, "result": result, "database": stats})
 
     def copy_valid_nodes(self, payload: dict) -> None:
         uri = str(payload.get("uri") or "").strip()

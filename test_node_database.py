@@ -1,6 +1,7 @@
 ﻿import sqlite3
 import tempfile
 import unittest
+import base64
 import sqlite3
 from pathlib import Path
 from unittest.mock import patch
@@ -367,7 +368,7 @@ class NodeDatabaseTest(unittest.TestCase):
                 text = "\n".join([
                     "vless://manual-uuid@example.com:443?type=ws&security=tls#HK",
                     "vless://manual-uuid@example.com:443?security=tls&type=ws#same-node",
-                    "https://not-a-node.example.com",
+                    "not-a-node",
                     "trojan://secret@trojan.example.com:443#SG",
                 ])
                 result = database.import_manual_valid_nodes(text, "local test")
@@ -380,6 +381,55 @@ class NodeDatabaseTest(unittest.TestCase):
                 self.assertTrue(all(row["manual_added"] for row in rows))
                 self.assertTrue(all(row["source_type"] == "manual_normal" for row in rows))
                 self.assertEqual(database.export_publish_subscription_nodes(10), [])
+
+    def test_manual_import_decodes_base64_subscription_text(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "nodes.db"
+            vless = "vless://11111111-1111-1111-1111-111111111111@hk.example.com:443?type=ws&security=tls#HK"
+            trojan = "trojan://secret@sg.example.com:443#SG"
+            encoded = base64.urlsafe_b64encode((vless + "\n" + trojan).encode("utf-8")).decode("ascii").rstrip("=")
+            with NodeDatabase(path) as database:
+                result = database.import_manual_valid_nodes(encoded, "华哥CF-Base64", "manual_cf")
+
+                self.assertEqual(result["added_count"], 2)
+                self.assertEqual(result["duplicate_count"], 0)
+                self.assertEqual(result["invalid_count"], 0)
+                self.assertEqual(result["base64_decoded_count"], 1)
+                self.assertEqual(result["subscription_url_count"], 0)
+                self.assertEqual(result["extracted_count"], 2)
+                rows = database.valid_nodes(10, group="manual_cf")
+                self.assertEqual(len(rows), 2)
+                self.assertTrue(all(row["manual_note"] == "华哥CF-Base64" for row in rows))
+                self.assertEqual(database.publish_pool_count(), 0)
+
+    def test_manual_import_fetches_subscription_url_and_redacts_invalid_url_tokens(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "nodes.db"
+            vless = "vless://22222222-2222-2222-2222-222222222222@cf.example.com:443?type=ws&host=demo.workers.dev&security=tls#CF"
+            encoded = base64.b64encode(vless.encode("utf-8")).decode("ascii")
+            url = "https://example.com/sub?token=not-real-secret-token-123456&b64"
+            with NodeDatabase(path) as database:
+                with patch("node_database.fetch_subscription_url", return_value=encoded) as mocked_fetch:
+                    result = database.import_manual_valid_nodes(url, "华哥CF-订阅测试01", "manual_cf")
+
+                mocked_fetch.assert_called_once_with(url)
+                self.assertEqual(result["added_count"], 1)
+                self.assertEqual(result["subscription_url_count"], 1)
+                self.assertEqual(result["base64_decoded_count"], 1)
+                self.assertEqual(result["extracted_count"], 1)
+                self.assertEqual(database.publish_pool_count(), 0)
+                self.assertEqual(database.valid_nodes(10, group="manual_cf")[0]["manual_note"], "华哥CF-订阅测试01")
+
+                blocked = database.import_manual_valid_nodes(
+                    "http://127.0.0.1/sub?token=not-real-secret-token-123456",
+                    "blocked",
+                    "manual_cf",
+                )
+                self.assertEqual(blocked["added_count"], 0)
+                self.assertEqual(blocked["invalid_count"], 1)
+                self.assertEqual(blocked["subscription_url_count"], 1)
+                self.assertNotIn("not-real-secret-token-123456", str(blocked))
+                self.assertIn("token=%2A%2A%2A", str(blocked))
 
     def test_manual_disable_removes_premium_publish_cache_and_blocks_revalidation(self):
         with tempfile.TemporaryDirectory() as directory:
