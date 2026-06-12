@@ -1098,39 +1098,47 @@ async function refreshNodes() {
   try {
     const protocol = encodeURIComponent($("validProtocol").value);
     const country = encodeURIComponent($("validCountry").value);
-    const data = await jsonFetch(api(`/api/valid-nodes?page=${page}&limit=${nodePageSize}&protocol=${protocol}&country=${country}`));
+    const group = encodeURIComponent($("validGroup")?.value || "");
+    const data = await jsonFetch(api(`/api/valid-nodes?page=${page}&limit=${nodePageSize}&protocol=${protocol}&country=${country}&group=${group}`));
     nodeTotal = data.total;
     $("pageText").textContent = `第 ${page} 页 · 共 ${nodeTotal} 条`;
     $("previousPage").disabled = page <= 1;
     $("nextPage").disabled = page * data.limit >= nodeTotal;
     updateSelectOptions("validProtocol", data.protocols || [], "全部协议");
     updateSelectOptions("validCountry", data.countries || [], "全部国家");
-    $("nodeList").innerHTML = data.nodes.length ? data.nodes.map((node) => `
-      <article class="node-card compact-node">
+    $("nodeList").innerHTML = data.nodes.length ? data.nodes.map((node) => {
+      const published = !!node.published;
+      const disabled = !!node.manual_disabled;
+      const classes = ["node-card", "compact-node", published ? "published-node" : "", disabled ? "disabled-node" : ""].filter(Boolean).join(" ");
+      return `
+      <article class="${classes}">
         <div class="node-meta compact-node-meta">
           <span class="protocol">${escapeHtml(node.protocol || "-")}</span>
           <span>地区 ${escapeHtml(node.country || "未知")}</span>
           <span>${Number(node.seconds || 0).toFixed(2)} 秒</span>
           <span>评分 ${node.quality_score ?? 0}</span>
-          <span>${node.manual_added ? "手动添加" : "自动验证"}</span>
+          <span>${node.source_type === "manual_cf" ? "自建CF" : node.manual_added ? "手动普通" : "GitHub公开"}</span>
           <span>${node.cf_candidate ? "CF 候选" : "普通候选"}</span>
-          <span>${node.published ? "已发布" : "未发布"}</span>
+          <span>${published ? "已发布 ✓" : "未发布"}</span>
+          <span>${disabled ? "已禁用" : "可管理"}</span>
         </div>
         <div class="node-name">${escapeHtml(node.server || "未知 server")} : ${escapeHtml(node.port || "-")}</div>
         <div class="node-meta compact-node-meta">
           <span>network ${escapeHtml(node.network || "-")}</span>
           <span>TLS ${node.tls ? "yes" : "no"}</span>
           <span>source ${escapeHtml(node.source_type || "-")}</span>
+          <span>note ${escapeHtml(node.manual_note || "-")}</span>
           <span>最近 ${escapeHtml(node.last_validated || "-")}</span>
         </div>
         <div class="actions compact-actions">
-          <button class="primary" data-valid-publish="${escapeHtml(node.uri || "")}">标记可发布</button>
-          <button class="ghost" data-valid-unpublish="${escapeHtml(node.uri || "")}">移出发布池</button>
+          <button class="ghost" data-valid-copy="${escapeHtml(node.uri || "")}" ${disabled ? "disabled" : ""}>复制节点</button>
+          ${published ? "" : `<button class="primary" data-valid-publish="${escapeHtml(node.uri || "")}" ${disabled ? "disabled" : ""}>标记可发布</button>`}
+          ${published ? `<button class="ghost" data-valid-unpublish="${escapeHtml(node.uri || "")}">移出发布池</button>` : ""}
           <button class="ghost" data-valid-premium-remove="${escapeHtml(node.uri || "")}">移出优质池</button>
-          <button class="ghost" data-valid-disable="${escapeHtml(node.uri || "")}">禁用</button>
+          <button class="ghost" data-valid-disable="${escapeHtml(node.uri || "")}" ${disabled ? "disabled" : ""}>禁用</button>
           <button class="danger" data-valid-delete="${escapeHtml(node.uri || "")}">删除</button>
         </div>
-      </article>`).join("") : `<p class="hint">暂无有效节点。启动验证后，通过稳定检查的节点会出现在这里，也可以手动导入候选。</p>`;
+      </article>`}).join("") : `<p class="hint">暂无有效节点。启动验证后，通过稳定检查的节点会出现在这里，也可以手动导入候选。</p>`;
     bindValidNodeActions();
   } catch (error) {
     toast(error.message);
@@ -1144,6 +1152,7 @@ async function importManualNodes() {
       body: JSON.stringify({
         nodes: $("manualNodeInput").value,
         note: $("manualNodeNote").value,
+        source_type: $("manualNodeSourceType").value,
       }),
     });
     const result = data.result || {};
@@ -1162,7 +1171,52 @@ async function importManualNodes() {
   }
 }
 
+async function copyTextToClipboard(value) {
+  if (!value) {
+    toast("没有可复制的节点");
+    return false;
+  }
+  try {
+    await navigator.clipboard?.writeText(value);
+  } catch (error) {
+    const area = document.createElement("textarea");
+    area.value = value;
+    area.style.position = "fixed";
+    area.style.opacity = "0";
+    document.body.appendChild(area);
+    area.select();
+    document.execCommand("copy");
+    document.body.removeChild(area);
+  }
+  return true;
+}
+
+async function copyValidNodes(payload) {
+  const data = await jsonFetch(api("/api/valid-nodes/copy"), {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  if (await copyTextToClipboard(data.content || "")) {
+    toast(`已复制 ${data.count || 0} 条节点`);
+  }
+  return data;
+}
+
+async function copyFilteredNodes() {
+  await copyValidNodes({
+    protocol: $("validProtocol").value,
+    country: $("validCountry").value,
+    group: $("validGroup").value,
+    limit: 500,
+  });
+}
+
 function bindValidNodeActions() {
+  document.querySelectorAll("[data-valid-copy]").forEach((button) => {
+    button.onclick = async () => {
+      await copyValidNodes({ uri: button.dataset.validCopy || "" });
+    };
+  });
   document.querySelectorAll("[data-valid-publish]").forEach((button) => {
     button.onclick = async () => {
       const data = await post(api("/api/publish-pool/mark"), { uri: button.dataset.validPublish || "", publishable: true });
@@ -2187,6 +2241,7 @@ $("clearLogs").onclick = async () => {
 };
 $("refreshNodes").onclick = refreshNodes;
 $("importManualNodes").onclick = importManualNodes;
+$("copyFilteredNodes").onclick = copyFilteredNodes;
 $("refreshProfiles").onclick = refreshProfiles;
 $("refreshProcessingPreview").onclick = previewRenameTemplate;
 $("saveRenameTemplate").onclick = saveRenameTemplate;
@@ -2244,6 +2299,7 @@ $("previousPage").onclick = () => { if (page > 1) { page -= 1; refreshNodes(); }
 $("nextPage").onclick = () => { if (page * nodePageSize < nodeTotal) { page += 1; refreshNodes(); } };
 $("validProtocol").onchange = () => { page = 1; refreshNodes(); };
 $("validCountry").onchange = () => { page = 1; refreshNodes(); };
+$("validGroup").onchange = () => { page = 1; refreshNodes(); };
 document.querySelectorAll(".tab").forEach((button) => button.onclick = () => {
   document.querySelectorAll(".tab").forEach((tab) => tab.classList.remove("active"));
   button.classList.add("active");

@@ -906,6 +906,17 @@
           <div class="compact-filter">
             <select id="validProtocol"><option value="">全部协议</option></select>
             <select id="validCountry"><option value="">全部国家</option></select>
+            <select id="validGroup">
+              <option value="">默认可用</option>
+              <option value="all">全部</option>
+              <option value="manual_cf">自建CF</option>
+              <option value="manual_normal">手动普通</option>
+              <option value="github_public">GitHub公开</option>
+              <option value="cf_candidate">CF候选</option>
+              <option value="published">已发布</option>
+              <option value="unpublished">未发布</option>
+              <option value="disabled">已禁用</option>
+            </select>
             <button class="ghost" id="refreshNodes">刷新</button>
           </div>
         </div>
@@ -921,7 +932,12 @@
           </label>
         </div>
         <div class="actions">
+          <select id="manualNodeSourceType">
+            <option value="manual_normal">手动普通</option>
+            <option value="manual_cf">自建CF</option>
+          </select>
           <button class="primary" id="importManualNodes">导入到有效节点库</button>
+          <button class="ghost" id="copyFilteredNodes">批量复制当前筛选</button>
           <span class="hint" id="manualNodeImportSummary">手动节点不会绕过发布池。</span>
         </div>
         <div class="node-list" id="nodeList"></div>

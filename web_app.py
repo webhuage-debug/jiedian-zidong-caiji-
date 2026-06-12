@@ -810,14 +810,15 @@ class DashboardHandler(BaseHTTPRequestHandler):
             limit = min(100, max(1, int(query.get("limit", ["20"])[0])))
             protocol = query.get("protocol", [""])[0].strip().lower()
             country = query.get("country", [""])[0].strip().upper()
+            group = query.get("group", [""])[0].strip().lower()
             with NodeDatabase(DATABASE) as database:
                 return self.send_json({
                     "page": page,
                     "limit": limit,
-                    "total": database.valid_node_count(protocol, country),
+                    "total": database.valid_node_count(protocol, country, group),
                     "protocols": database.valid_node_protocols(),
                     "countries": database.valid_node_countries(),
-                    "nodes": database.valid_nodes(limit, (page - 1) * limit, protocol, country),
+                    "nodes": database.valid_nodes(limit, (page - 1) * limit, protocol, country, group),
                 })
         if route == "/api/node-processing/config":
             with NodeDatabase(DATABASE) as database:
@@ -959,6 +960,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return self.delete_valid_node(payload)
         if route == "/api/valid-nodes/remove-premium":
             return self.remove_valid_node_premium(payload)
+        if route == "/api/valid-nodes/copy":
+            return self.copy_valid_nodes(payload)
         if route == "/api/nodes/clear":
             return self.clear_node_pool(payload)
         if route == "/api/logs/clear":
@@ -1336,10 +1339,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def import_manual_valid_nodes(self, payload: dict) -> None:
         text = str(payload.get("nodes") or payload.get("text") or "").strip()
         note = str(payload.get("note") or "").strip()
+        source_type = str(payload.get("source_type") or "manual_normal").strip()
         if not text:
             return self.send_json({"error": "请粘贴节点链接"}, HTTPStatus.BAD_REQUEST)
         with NodeDatabase(DATABASE) as database:
-            result = database.import_manual_valid_nodes(text, note)
+            result = database.import_manual_valid_nodes(text, note, source_type)
             stats = database.stats()
         LOG_BUS.emit(
             "validator",
@@ -1350,6 +1354,20 @@ class DashboardHandler(BaseHTTPRequestHandler):
             "success" if result["added_count"] else "warning",
         )
         return self.send_json({"result": result, "database": stats})
+
+    def copy_valid_nodes(self, payload: dict) -> None:
+        uri = str(payload.get("uri") or "").strip()
+        protocol = str(payload.get("protocol") or "").strip().lower()
+        country = str(payload.get("country") or "").strip().upper()
+        group = str(payload.get("group") or "").strip().lower()
+        limit = int_value(payload, "limit", 200, 1, 1000)
+        with NodeDatabase(DATABASE) as database:
+            uris = database.copyable_valid_node_uris(limit, protocol, country, group, uri)
+        LOG_BUS.emit("validator", "manual_node_copy | count=" + str(len(uris)) + " operator=admin", "info")
+        return self.send_json({
+            "count": len(uris),
+            "content": "\n".join(uris),
+        })
 
     def disable_valid_node(self, payload: dict) -> None:
         uri = str(payload.get("uri") or "").strip()

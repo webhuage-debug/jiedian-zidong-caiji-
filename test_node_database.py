@@ -378,7 +378,7 @@ class NodeDatabaseTest(unittest.TestCase):
                 rows = database.valid_nodes(10)
                 self.assertEqual(len(rows), 2)
                 self.assertTrue(all(row["manual_added"] for row in rows))
-                self.assertTrue(all(row["source_type"] == "manual" for row in rows))
+                self.assertTrue(all(row["source_type"] == "manual_normal" for row in rows))
                 self.assertEqual(database.export_publish_subscription_nodes(10), [])
 
     def test_manual_disable_removes_premium_publish_cache_and_blocks_revalidation(self):
@@ -447,6 +447,33 @@ class NodeDatabaseTest(unittest.TestCase):
                 self.assertTrue(row["cf_candidate"])
                 database.refresh_premium_subscription_pool(10)
                 self.assertEqual(database.publish_pool_count(), 0)
+
+    def test_manual_cf_import_filter_and_copy_rules(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "nodes.db"
+            cf_uri = "vless://manual-cf@example.com:443?type=ws&host=demo.workers.dev&security=tls#CF"
+            normal_uri = "trojan://secret@normal.example.com:443#SG"
+            with NodeDatabase(path) as database:
+                cf_result = database.import_manual_valid_nodes(cf_uri, "华哥CF-20260612", "manual_cf")
+                normal_result = database.import_manual_valid_nodes(normal_uri, "normal", "manual_normal")
+
+                self.assertEqual(cf_result["added_count"], 1)
+                self.assertEqual(normal_result["added_count"], 1)
+                cf_rows = database.valid_nodes(20, group="manual_cf")
+                normal_rows = database.valid_nodes(20, group="manual_normal")
+                self.assertEqual([row["uri"] for row in cf_rows], [cf_uri])
+                self.assertEqual([row["uri"] for row in normal_rows], [normal_uri])
+                self.assertTrue(cf_rows[0]["cf_candidate"])
+                self.assertEqual(cf_rows[0]["source_type"], "manual_cf")
+                self.assertEqual(database.copyable_valid_node_uris(group="manual_cf"), [cf_uri])
+
+                database.mark_publish_node(cf_uri, True)
+                self.assertEqual(database.valid_node_count(group="published"), 1)
+                self.assertEqual(database.valid_node_count(group="unpublished"), 1)
+
+                database.disable_valid_node(cf_uri, "local bad")
+                self.assertEqual(database.copyable_valid_node_uris(uri=cf_uri), [])
+                self.assertEqual(database.copyable_valid_node_uris(group="disabled"), [])
 
     def test_stores_bot_config_verification_and_message_log(self):
         with tempfile.TemporaryDirectory() as directory:

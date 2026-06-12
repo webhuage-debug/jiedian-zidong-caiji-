@@ -340,7 +340,7 @@ class NodeDatabase:
                 proxy_ips TEXT NOT NULL DEFAULT '',
                 country TEXT NOT NULL DEFAULT '',
                 node_fingerprint TEXT NOT NULL DEFAULT '',
-                source_type TEXT NOT NULL DEFAULT 'validator',
+                source_type TEXT NOT NULL DEFAULT 'unknown',
                 manual_added INTEGER NOT NULL DEFAULT 0,
                 manual_disabled INTEGER NOT NULL DEFAULT 0,
                 manual_note TEXT NOT NULL DEFAULT '',
@@ -670,7 +670,7 @@ class NodeDatabase:
         valid_migrations = {
             "country": 'TEXT NOT NULL DEFAULT ""',
             "node_fingerprint": 'TEXT NOT NULL DEFAULT ""',
-            "source_type": "TEXT NOT NULL DEFAULT 'validator'",
+            "source_type": "TEXT NOT NULL DEFAULT 'unknown'",
             "manual_added": "INTEGER NOT NULL DEFAULT 0",
             "manual_disabled": "INTEGER NOT NULL DEFAULT 0",
             "manual_note": 'TEXT NOT NULL DEFAULT ""',
@@ -980,7 +980,7 @@ class NodeDatabase:
                 manual_note, disabled_at, disabled_reason, cf_candidate,
                 first_validated, last_validated
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, 'validator', 0, 0, '', NULL, '', ?, BEIJING_TIMESTAMP(), BEIJING_TIMESTAMP())
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, '', NULL, '', ?, BEIJING_TIMESTAMP(), BEIJING_TIMESTAMP())
             ON CONFLICT(uri) DO UPDATE SET
                 reason = excluded.reason,
                 seconds = excluded.seconds,
@@ -1000,6 +1000,7 @@ class NodeDatabase:
                 proxy_ips or "",
                 country,
                 fingerprint,
+                "github_public" if source_row else "unknown",
                 1 if is_cf_candidate_uri(uri, source_repo, source_path) else 0,
             ),
         )
@@ -1027,7 +1028,10 @@ class NodeDatabase:
             return False, "节点已被手动禁用", meta
         return True, "ok", meta
 
-    def import_manual_valid_nodes(self, text: str, note: str = "") -> Dict[str, object]:
+    def import_manual_valid_nodes(self, text: str, note: str = "", source_type: str = "manual_normal") -> Dict[str, object]:
+        source_type = str(source_type or "manual_normal").strip()
+        if source_type not in {"manual_cf", "manual_normal"}:
+            source_type = "manual_normal"
         raw_lines = [line.strip() for line in str(text or "").splitlines()]
         lines = [line for line in raw_lines if line and not line.lstrip().startswith("#")]
         added = []
@@ -1058,11 +1062,11 @@ class NodeDatabase:
                     node_fingerprint, source_type, manual_added, manual_disabled,
                     manual_note, disabled_at, disabled_reason, cf_candidate,
                     first_validated, last_validated, validation_count
-                ) VALUES (?, ?, ?, 0, '', '', ?, 'manual', 1, 0, ?, NULL, '', ?, BEIJING_TIMESTAMP(), BEIJING_TIMESTAMP(), 1)
+                ) VALUES (?, ?, ?, 0, '', '', ?, ?, 1, 0, ?, NULL, '', ?, BEIJING_TIMESTAMP(), BEIJING_TIMESTAMP(), 1)
                 ON CONFLICT(uri) DO UPDATE SET
                     reason = excluded.reason,
                     node_fingerprint = excluded.node_fingerprint,
-                    source_type = 'manual',
+                    source_type = excluded.source_type,
                     manual_added = 1,
                     manual_disabled = 0,
                     manual_note = excluded.manual_note,
@@ -1076,8 +1080,9 @@ class NodeDatabase:
                     str(meta.get("protocol") or protocol_of(line)),
                     "manual_node_add",
                     fingerprint,
+                    source_type,
                     str(note or "")[:500],
-                    1 if is_cf_candidate_uri(line) else 0,
+                    1 if source_type == "manual_cf" or is_cf_candidate_uri(line) else 0,
                 ),
             )
             added.append({
@@ -1097,6 +1102,7 @@ class NodeDatabase:
             "invalid": invalid,
             "operator": "admin",
             "event": "manual_node_add",
+            "source_type": source_type,
         }
 
     def _remove_node_from_pools(self, uri: str) -> Dict[str, object]:
@@ -2014,19 +2020,53 @@ class NodeDatabase:
         self.connection.commit()
         return {"id": user_id, "username": username}
 
-    def valid_node_count(self, protocol: str = "", country: str = "") -> int:
+    def valid_node_count(self, protocol: str = "", country: str = "", group: str = "") -> int:
+        where, params = self._valid_node_filter_sql(protocol, country, group)
+        sql = 'SELECT COUNT(*) FROM "有效节点" v LEFT JOIN publish_subscription_pool pub ON pub.uri = v.uri' + where
+        return self.connection.execute(sql, params).fetchone()[0]
+
+    def _valid_node_filter_sql(
+        self,
+        protocol: str = "",
+        country: str = "",
+        group: str = "",
+    ) -> Tuple[str, List[object]]:
         clauses = []
-        params = []
+        params: List[object] = []
         if protocol:
-            clauses.append("protocol = ?")
+            clauses.append("v.protocol = ?")
             params.append(protocol.lower())
         if country:
-            clauses.append("country LIKE ?")
+            clauses.append("v.country LIKE ?")
             params.append("%" + country.upper() + "%")
-        sql = 'SELECT COUNT(*) FROM "有效节点" WHERE manual_disabled = 0'
-        if clauses:
-            sql += " AND " + " AND ".join(clauses)
-        return self.connection.execute(sql, params).fetchone()[0]
+        group = str(group or "").strip().lower()
+        if group == "manual_cf":
+            clauses.append("v.source_type = 'manual_cf'")
+            clauses.append("v.manual_disabled = 0")
+        elif group == "manual_normal":
+            clauses.append("v.source_type = 'manual_normal'")
+            clauses.append("v.manual_disabled = 0")
+        elif group == "github_public":
+            clauses.append("v.source_type IN ('github_public', 'validator')")
+            clauses.append("v.manual_disabled = 0")
+        elif group == "cf_candidate":
+            clauses.append("v.cf_candidate = 1")
+            clauses.append("v.manual_disabled = 0")
+        elif group == "published":
+            clauses.append("pub.publish_enabled = 1")
+            clauses.append("pub.manual_status = 'publishable'")
+            clauses.append("v.manual_disabled = 0")
+        elif group == "unpublished":
+            clauses.append("(pub.uri IS NULL OR pub.publish_enabled != 1 OR pub.manual_status != 'publishable')")
+            clauses.append("v.manual_disabled = 0")
+        elif group == "disabled":
+            clauses.append("v.manual_disabled = 1")
+        elif group == "all":
+            pass
+        else:
+            clauses.append("v.manual_disabled = 0")
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        return where, params
 
     def valid_node_protocols(self) -> List[str]:
         return [
@@ -2046,6 +2086,8 @@ class NodeDatabase:
 
     def _valid_node_row(self, row) -> Dict[str, object]:
         meta = uri_metadata(str(row[0]))
+        raw_source_type = row[8] if len(row) > 8 else "unknown"
+        source_type = "github_public" if raw_source_type == "validator" else raw_source_type
         item = {
             "uri": row[0],
             "protocol": row[1],
@@ -2055,7 +2097,7 @@ class NodeDatabase:
             "validation_count": row[5],
             "country": row[6],
             "node_fingerprint": row[7] if len(row) > 7 else node_fingerprint(str(row[0])),
-            "source_type": row[8] if len(row) > 8 else "validator",
+            "source_type": source_type,
             "manual_added": bool(row[9]) if len(row) > 9 else False,
             "manual_disabled": bool(row[10]) if len(row) > 10 else False,
             "manual_note": row[11] if len(row) > 11 else "",
@@ -2084,37 +2126,60 @@ class NodeDatabase:
         offset: int = 0,
         protocol: str = "",
         country: str = "",
+        group: str = "",
         quality_order: bool = False,
     ) -> List[Dict[str, object]]:
-        clauses = []
-        params = []
-        if protocol:
-            clauses.append("protocol = ?")
-            params.append(protocol.lower())
-        if country:
-            clauses.append("country LIKE ?")
-            params.append("%" + country.upper() + "%")
+        where, params = self._valid_node_filter_sql(protocol, country, group)
         sql = """
-            SELECT uri, protocol, proxy_ips, seconds, last_validated, validation_count, country,
-                   node_fingerprint, source_type, manual_added, manual_disabled, manual_note,
-                   disabled_at, disabled_reason, cf_candidate
-            FROM "有效节点"
-            WHERE manual_disabled = 0
-        """
-        if clauses:
-            sql += " AND " + " AND ".join(clauses)
+            SELECT v.uri, v.protocol, v.proxy_ips, v.seconds, v.last_validated, v.validation_count, v.country,
+                   v.node_fingerprint, v.source_type, v.manual_added, v.manual_disabled, v.manual_note,
+                   v.disabled_at, v.disabled_reason, v.cf_candidate
+            FROM "有效节点" v
+            LEFT JOIN publish_subscription_pool pub ON pub.uri = v.uri
+        """ + where
         if quality_order:
             sql += """
-                ORDER BY seconds ASC, validation_count DESC, last_validated DESC, rowid DESC
+                ORDER BY v.seconds ASC, v.validation_count DESC, v.last_validated DESC, v.rowid DESC
                 LIMIT ? OFFSET ?
             """
         else:
             sql += """
-                ORDER BY last_validated DESC, rowid DESC
+                ORDER BY v.last_validated DESC, v.rowid DESC
                 LIMIT ? OFFSET ?
             """
         params.extend([limit, offset])
         return [self._valid_node_row(row) for row in self.connection.execute(sql, params)]
+
+    def copyable_valid_node_uris(
+        self,
+        limit: int = 200,
+        protocol: str = "",
+        country: str = "",
+        group: str = "",
+        uri: str = "",
+    ) -> List[str]:
+        limit = max(1, min(int(limit or 200), 1000))
+        if uri:
+            row = self.connection.execute(
+                'SELECT uri FROM "有效节点" WHERE uri = ? AND manual_disabled = 0',
+                (str(uri or ""),),
+            ).fetchone()
+            return [str(row[0])] if row else []
+        if str(group or "").strip().lower() == "disabled":
+            return []
+        where, params = self._valid_node_filter_sql(protocol, country, group)
+        if "manual_disabled" not in where:
+            where = (where + " AND " if where else " WHERE ") + "v.manual_disabled = 0"
+        sql = """
+            SELECT v.uri
+            FROM "有效节点" v
+            LEFT JOIN publish_subscription_pool pub ON pub.uri = v.uri
+        """ + where + """
+            ORDER BY v.last_validated DESC, v.rowid DESC
+            LIMIT ?
+        """
+        params.append(limit)
+        return [str(row[0]) for row in self.connection.execute(sql, params)]
 
     def all_valid_nodes(self, limit: Optional[int] = None, quality_order: bool = False) -> List[Dict[str, object]]:
         order = "ORDER BY seconds ASC, validation_count DESC, last_validated DESC, rowid DESC" if quality_order else "ORDER BY last_validated DESC, rowid DESC"

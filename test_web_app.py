@@ -540,6 +540,34 @@ class WebAppRoutingTest(unittest.TestCase):
             finally:
                 web_app.DATABASE = original_database
 
+    def test_valid_node_copy_api_returns_only_copyable_filtered_nodes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "nodes.db"
+            original_database = web_app.DATABASE
+            try:
+                web_app.DATABASE = database_path
+                cf_uri = "vless://copy-cf@example.com:443?type=ws&host=demo.workers.dev&security=tls#CF"
+                disabled_uri = "trojan://secret@disabled.example.com:443#SG"
+                with NodeDatabase(database_path) as database:
+                    database.import_manual_valid_nodes(cf_uri, "cf", "manual_cf")
+                    database.import_manual_valid_nodes(disabled_uri, "normal", "manual_normal")
+                    database.disable_valid_node(disabled_uri, "bad")
+                handler = object.__new__(DashboardHandler)
+                responses = []
+                handler.send_json = lambda payload, status=HTTPStatus.OK, headers=None: responses.append((payload, status))
+
+                handler.copy_valid_nodes({"group": "manual_cf"})
+
+                self.assertEqual(responses[-1][1], HTTPStatus.OK)
+                self.assertEqual(responses[-1][0]["count"], 1)
+                self.assertIn(cf_uri, responses[-1][0]["content"])
+                self.assertNotIn(disabled_uri, responses[-1][0]["content"])
+
+                handler.copy_valid_nodes({"uri": disabled_uri})
+                self.assertEqual(responses[-1][0]["count"], 0)
+            finally:
+                web_app.DATABASE = original_database
+
     def test_bot_simulation_uses_local_logic_without_telegram(self):
         with tempfile.TemporaryDirectory() as directory:
             database_path = Path(directory) / "nodes.db"

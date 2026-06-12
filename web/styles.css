@@ -409,6 +409,8 @@ button:disabled { cursor: not-allowed; opacity: .46; transform: none; }
 .protocol { color: var(--accent); font-weight: 800; text-transform: uppercase; }
 .node-uri { color: var(--machine-text); background: var(--machine-bg); border-radius: 8px; padding: 8px; font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
 .compact-node { display: grid; grid-template-columns: minmax(250px, 430px) minmax(0, 1fr); gap: 12px; align-items: center; padding: 9px 10px; border-radius: 8px; }
+.compact-node.published-node { border-color: #83c59f; background: #f0fbf4; box-shadow: inset 4px 0 0 var(--success); }
+.compact-node.disabled-node { opacity: .62; background: var(--surface-3); filter: grayscale(.28); }
 .compact-node-meta { margin-bottom: 0; gap: 6px; }
 .compact-node-meta span { display: inline-flex; align-items: center; min-height: 24px; border: 1px solid var(--border); border-radius: 999px; padding: 2px 8px; background: var(--surface-2); white-space: nowrap; }
 .compact-node-uri { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; overflow-wrap: normal; }
