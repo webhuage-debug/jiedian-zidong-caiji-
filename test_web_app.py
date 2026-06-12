@@ -563,11 +563,38 @@ class WebAppRoutingTest(unittest.TestCase):
                 self.assertEqual(responses[-1][0]["added_count"], 1)
                 self.assertEqual(responses[-1][0]["base64_decoded_count"], 1)
                 self.assertEqual(responses[-1][0]["extracted_count"], 1)
+                self.assertEqual(responses[-1][0]["input_source_type"], "base64_text")
                 with NodeDatabase(database_path) as database:
                     self.assertEqual(database.publish_pool_count(), 0)
                     rows = database.valid_nodes(10, group="manual_cf")
                     self.assertEqual(len(rows), 1)
                     self.assertEqual(rows[0]["manual_note"], "华哥CF-API-Base64")
+                    logs = database.manual_import_logs()
+                    self.assertEqual(logs[0]["input_source_type"], "base64_text")
+                    self.assertEqual(logs[0]["added_count"], 1)
+            finally:
+                web_app.DATABASE = original_database
+
+    def test_status_includes_recent_manual_import_logs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "nodes.db"
+            original_database = web_app.DATABASE
+            try:
+                web_app.DATABASE = database_path
+                uri = "vless://44444444-4444-4444-4444-444444444444@status-cf.example.com:443?type=ws&host=demo.workers.dev&security=tls#CF"
+                with NodeDatabase(database_path) as database:
+                    database.import_manual_valid_nodes(uri + "\nnot-a-node", "status-note", "manual_cf")
+                handler = object.__new__(DashboardHandler)
+
+                status = handler.dashboard_status()
+
+                logs = status["manual_import_logs"]
+                self.assertGreaterEqual(len(logs), 1)
+                self.assertEqual(logs[0]["input_source_type"], "raw_uri")
+                self.assertEqual(logs[0]["selected_source_type"], "manual_cf")
+                self.assertEqual(logs[0]["added_count"], 1)
+                self.assertEqual(logs[0]["invalid_count"], 1)
+                self.assertIn("unrecognized input", logs[0]["error_summary"])
             finally:
                 web_app.DATABASE = original_database
 

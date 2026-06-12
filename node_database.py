@@ -384,6 +384,7 @@ def unpack_subscription_import_text(text: str) -> Dict[str, object]:
     raw = str(text or "").strip()
     extracted: List[str] = []
     invalid: List[Dict[str, str]] = []
+    input_kinds = set()
     subscription_url_count = 0
     base64_decoded_count = 0
 
@@ -392,12 +393,14 @@ def unpack_subscription_import_text(text: str) -> Dict[str, object]:
         extracted.extend(extract_node_uris_from_text(content))
         return len(extracted) - before
 
-    def decode_and_add(content: str) -> bool:
+    def decode_and_add(content: str, mark_input_kind: bool = True) -> bool:
         nonlocal base64_decoded_count
         decoded = decode_base64_subscription(content)
         if decoded is None:
             return False
         base64_decoded_count += 1
+        if mark_input_kind:
+            input_kinds.add("base64_text")
         add_nodes(decoded)
         return True
 
@@ -405,9 +408,11 @@ def unpack_subscription_import_text(text: str) -> Dict[str, object]:
     for line in lines:
         lower = line.lower()
         if is_supported_node_uri(line):
+            input_kinds.add("raw_uri")
             extracted.append(line)
             continue
         if lower.startswith(("http://", "https://")):
+            input_kinds.add("subscription_url")
             subscription_url_count += 1
             try:
                 body = fetch_subscription_url(line)
@@ -415,11 +420,12 @@ def unpack_subscription_import_text(text: str) -> Dict[str, object]:
                 invalid.append({"input": redact_url(line), "reason": str(exc)})
                 continue
             found = add_nodes(body)
-            decoded = decode_and_add(body)
+            decoded = decode_and_add(body, mark_input_kind=False)
             if found == 0 and not decoded:
                 invalid.append({"input": redact_url(line), "reason": "subscription did not contain supported nodes"})
             continue
         if NODE_URI_RE.search(line):
+            input_kinds.add("raw_uri")
             add_nodes(line)
             continue
         if _looks_like_base64(line):
@@ -430,13 +436,29 @@ def unpack_subscription_import_text(text: str) -> Dict[str, object]:
 
     if len(lines) > 1 and _looks_like_base64(raw):
         decode_and_add(raw)
+    input_source_type = next(iter(input_kinds)) if len(input_kinds) == 1 else "mixed"
     return {
         "nodes": extracted,
         "invalid_inputs": invalid,
+        "input_source_type": input_source_type,
         "subscription_url_count": subscription_url_count,
         "base64_decoded_count": base64_decoded_count,
         "extracted_count": len(extracted),
     }
+
+
+def summarize_import_errors(items: Sequence[Dict[str, object]], limit: int = 5) -> str:
+    counts: Dict[str, int] = {}
+    for item in items:
+        reason = str(item.get("reason") or "unknown").strip() or "unknown"
+        counts[reason] = counts.get(reason, 0) + 1
+    if not counts:
+        return ""
+    parts = [
+        reason + " x" + str(count)
+        for reason, count in sorted(counts.items(), key=lambda entry: (-entry[1], entry[0]))[:limit]
+    ]
+    return "; ".join(parts)[:500]
 
 
 def is_asia_country(country: str) -> bool:
@@ -576,6 +598,22 @@ class NodeDatabase:
                 updated_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours'))
             );
             CREATE INDEX IF NOT EXISTS idx_manual_blocked_nodes_protocol ON manual_blocked_nodes (protocol, server, port);
+
+            CREATE TABLE IF NOT EXISTS manual_import_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                input_source_type TEXT NOT NULL DEFAULT 'mixed',
+                selected_source_type TEXT NOT NULL DEFAULT '',
+                subscription_url_count INTEGER NOT NULL DEFAULT 0,
+                base64_decoded_count INTEGER NOT NULL DEFAULT 0,
+                extracted_count INTEGER NOT NULL DEFAULT 0,
+                added_count INTEGER NOT NULL DEFAULT 0,
+                duplicate_count INTEGER NOT NULL DEFAULT 0,
+                invalid_count INTEGER NOT NULL DEFAULT 0,
+                error_summary TEXT NOT NULL DEFAULT '',
+                manual_note TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_manual_import_logs_created ON manual_import_logs (created_at DESC, id DESC);
 
             CREATE TABLE IF NOT EXISTS "无效节点" (
                 uri TEXT PRIMARY KEY,
@@ -1240,6 +1278,62 @@ class NodeDatabase:
             return False, "节点已被手动禁用", meta
         return True, "ok", meta
 
+    def record_manual_import_log(self, result: Dict[str, object], note: str = "") -> None:
+        invalid = result.get("invalid") if isinstance(result.get("invalid"), list) else []
+        error_summary = summarize_import_errors(invalid)
+        self.connection.execute(
+            """
+            INSERT INTO manual_import_logs (
+                input_source_type, selected_source_type, subscription_url_count,
+                base64_decoded_count, extracted_count, added_count, duplicate_count,
+                invalid_count, error_summary, manual_note, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, BEIJING_TIMESTAMP())
+            """,
+            (
+                str(result.get("input_source_type") or "mixed"),
+                str(result.get("source_type") or ""),
+                int(result.get("subscription_url_count") or 0),
+                int(result.get("base64_decoded_count") or 0),
+                int(result.get("extracted_count") or 0),
+                int(result.get("added_count") or 0),
+                int(result.get("duplicate_count") or 0),
+                int(result.get("invalid_count") or 0),
+                error_summary,
+                str(note or "")[:300],
+            ),
+        )
+
+    def manual_import_logs(self, limit: int = 12) -> List[Dict[str, object]]:
+        limit = max(1, min(int(limit or 12), 50))
+        rows = self.connection.execute(
+            """
+            SELECT id, input_source_type, selected_source_type, subscription_url_count,
+                   base64_decoded_count, extracted_count, added_count, duplicate_count,
+                   invalid_count, error_summary, manual_note, created_at
+            FROM manual_import_logs
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+        return [
+            {
+                "id": row[0],
+                "input_source_type": row[1],
+                "selected_source_type": row[2],
+                "subscription_url_count": row[3],
+                "base64_decoded_count": row[4],
+                "extracted_count": row[5],
+                "added_count": row[6],
+                "duplicate_count": row[7],
+                "invalid_count": row[8],
+                "error_summary": row[9],
+                "manual_note": row[10],
+                "created_at": row[11],
+            }
+            for row in rows
+        ]
+
     def import_manual_valid_nodes(self, text: str, note: str = "", source_type: str = "manual_normal") -> Dict[str, object]:
         source_type = str(source_type or "manual_normal").strip()
         if source_type not in {"manual_cf", "manual_normal", "github_public", "unknown"}:
@@ -1304,8 +1398,7 @@ class NodeDatabase:
                 "port": str(meta.get("port") or ""),
                 "node_fingerprint": fingerprint,
             })
-        self.connection.commit()
-        return {
+        result = {
             "added_count": len(added),
             "duplicate_count": len(duplicates),
             "invalid_count": len(invalid),
@@ -1318,7 +1411,12 @@ class NodeDatabase:
             "subscription_url_count": int(unpacked["subscription_url_count"]),
             "base64_decoded_count": int(unpacked["base64_decoded_count"]),
             "extracted_count": int(unpacked["extracted_count"]),
+            "input_source_type": str(unpacked["input_source_type"]),
+            "error_summary": summarize_import_errors(invalid),
         }
+        self.record_manual_import_log(result, note)
+        self.connection.commit()
+        return result
 
     def _remove_node_from_pools(self, uri: str) -> Dict[str, object]:
         premium = self.connection.execute("DELETE FROM premium_subscription_pool WHERE uri = ?", (uri,)).rowcount

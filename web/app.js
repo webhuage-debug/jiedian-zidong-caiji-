@@ -712,6 +712,7 @@ async function refreshStatus() {
     updateNodeFlowStatus(data.database, collectorRunning, validatorRunning, auto);
     updateModuleDashboards(data, collectorRunning, validatorRunning, auto);
     updatePipelineStatus(data);
+    renderManualImportLogs(data.manual_import_logs || []);
     $("autoBadge").textContent = auto.enabled ? "已开启" : "已关闭";
     $("autoBadge").classList.toggle("running", !!auto.enabled);
     $("autoPhase").textContent = phaseText(auto.phase);
@@ -1092,6 +1093,38 @@ function connectLogs() {
     refreshStatus();
   };
   eventSource.onerror = () => setTimeout(refreshStatus, 1200);
+}
+
+function manualImportSourceLabel(value) {
+  return {
+    raw_uri: "原始URI",
+    base64_text: "Base64",
+    subscription_url: "订阅URL",
+    mixed: "混合输入",
+  }[value] || "混合输入";
+}
+
+function renderManualImportLogs(items = []) {
+  const target = $("manualImportLogs");
+  if (!target) return;
+  target.innerHTML = items.length ? items.map((item) => `
+    <article class="profile-card">
+      <div class="node-meta">
+        <span class="protocol">${escapeHtml(manualImportSourceLabel(item.input_source_type))}</span>
+        <span>${escapeHtml(item.created_at || "-")}</span>
+        <span>写入 ${Number(item.added_count || 0)}</span>
+        <span>重复 ${Number(item.duplicate_count || 0)}</span>
+        <span>失败 ${Number(item.invalid_count || 0)}</span>
+      </div>
+      <div class="node-meta">
+        <span>订阅URL ${Number(item.subscription_url_count || 0)}</span>
+        <span>Base64 ${Number(item.base64_decoded_count || 0)}</span>
+        <span>提取 ${Number(item.extracted_count || 0)}</span>
+        <span>source ${escapeHtml(item.selected_source_type || "-")}</span>
+      </div>
+      <div class="node-uri">${escapeHtml(item.error_summary || item.manual_note || "无错误摘要")}</div>
+    </article>
+  `).join("") : `<p class="hint">暂无导入记录。导入原始节点、Base64 或订阅 URL 后会显示在这里。</p>`;
 }
 
 async function refreshNodes() {

@@ -376,6 +376,7 @@ class NodeDatabaseTest(unittest.TestCase):
                 self.assertEqual(result["added_count"], 2)
                 self.assertEqual(result["duplicate_count"], 1)
                 self.assertEqual(result["invalid_count"], 1)
+                self.assertEqual(result["input_source_type"], "raw_uri")
                 rows = database.valid_nodes(10)
                 self.assertEqual(len(rows), 2)
                 self.assertTrue(all(row["manual_added"] for row in rows))
@@ -397,10 +398,16 @@ class NodeDatabaseTest(unittest.TestCase):
                 self.assertEqual(result["base64_decoded_count"], 1)
                 self.assertEqual(result["subscription_url_count"], 0)
                 self.assertEqual(result["extracted_count"], 2)
+                self.assertEqual(result["input_source_type"], "base64_text")
                 rows = database.valid_nodes(10, group="manual_cf")
                 self.assertEqual(len(rows), 2)
                 self.assertTrue(all(row["manual_note"] == "华哥CF-Base64" for row in rows))
                 self.assertEqual(database.publish_pool_count(), 0)
+                logs = database.manual_import_logs()
+                self.assertEqual(len(logs), 1)
+                self.assertEqual(logs[0]["input_source_type"], "base64_text")
+                self.assertEqual(logs[0]["added_count"], 2)
+                self.assertEqual(logs[0]["manual_note"], "华哥CF-Base64")
 
     def test_manual_import_fetches_subscription_url_and_redacts_invalid_url_tokens(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -417,6 +424,7 @@ class NodeDatabaseTest(unittest.TestCase):
                 self.assertEqual(result["subscription_url_count"], 1)
                 self.assertEqual(result["base64_decoded_count"], 1)
                 self.assertEqual(result["extracted_count"], 1)
+                self.assertEqual(result["input_source_type"], "subscription_url")
                 self.assertEqual(database.publish_pool_count(), 0)
                 self.assertEqual(database.valid_nodes(10, group="manual_cf")[0]["manual_note"], "华哥CF-订阅测试01")
 
@@ -430,6 +438,11 @@ class NodeDatabaseTest(unittest.TestCase):
                 self.assertEqual(blocked["subscription_url_count"], 1)
                 self.assertNotIn("not-real-secret-token-123456", str(blocked))
                 self.assertIn("token=%2A%2A%2A", str(blocked))
+                logs = database.manual_import_logs(5)
+                self.assertEqual(logs[0]["input_source_type"], "subscription_url")
+                self.assertEqual(logs[0]["invalid_count"], 1)
+                self.assertIn("subscription url host is not allowed", logs[0]["error_summary"])
+                self.assertNotIn("not-real-secret-token-123456", str(logs))
 
     def test_manual_disable_removes_premium_publish_cache_and_blocks_revalidation(self):
         with tempfile.TemporaryDirectory() as directory:

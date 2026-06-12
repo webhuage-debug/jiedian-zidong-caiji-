@@ -1021,6 +1021,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 "database": stats,
                 "repos": {"items": repos, "count": len(repos)},
                 "system_health": system_health_summary(stats, control, tasks),
+                "manual_import_logs": database.manual_import_logs(),
             }
 
     def health_status(self) -> dict:
