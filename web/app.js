@@ -1127,6 +1127,136 @@ function renderManualImportLogs(items = []) {
   `).join("") : `<p class="hint">暂无导入记录。导入原始节点、Base64 或订阅 URL 后会显示在这里。</p>`;
 }
 
+function sourceTypeLabel(value = "") {
+  return {
+    manual_cf: "自建CF",
+    manual_normal: "手动普通",
+    github_public: "GitHub公开",
+    validator: "GitHub公开",
+    unknown: "未知来源",
+  }[value] || value || "未知来源";
+}
+
+async function refreshPublishCenter() {
+  try {
+    const [summary, published, ready] = await Promise.all([
+      jsonFetch(api("/api/publish-center/summary")),
+      jsonFetch(api("/api/publish-center/published?limit=80")),
+      jsonFetch(api("/api/publish-center/ready?limit=80")),
+    ]);
+    renderPublishCenter(summary, published.nodes || [], ready.nodes || []);
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+function renderPublishCenter(summary = {}, published = [], ready = []) {
+  setText("publishCenterPublishedCount", Number(summary.published_count || 0).toLocaleString());
+  setText("publishCenterReadyCount", Number(summary.ready_count || 0).toLocaleString());
+  setText("publishCenterValidCount", Number(summary.valid_count || 0).toLocaleString());
+  setText("publishCenterManualCfCount", Number(summary.manual_cf_count || 0).toLocaleString());
+  setText("publishCenterGithubCount", Number(summary.github_public_count || 0).toLocaleString());
+  setText("publishCenterCfCandidateCount", Number(summary.cf_candidate_count || 0).toLocaleString());
+  setText("publishCenterDisabledCount", Number(summary.disabled_count || 0).toLocaleString());
+  const publishedTarget = $("publishCenterPublished");
+  const readyTarget = $("publishCenterReady");
+  if (publishedTarget) {
+    publishedTarget.innerHTML = published.length ? published.map((node) => publishCenterNodeCard(node, "published")).join("") : `<p class="hint">发布池为空。Bot 会提示“正在筛选中”，不会从有效节点库或优质候选兜底发放。</p>`;
+  }
+  if (readyTarget) {
+    readyTarget.innerHTML = ready.length ? ready.map((node) => publishCenterNodeCard(node, "ready")).join("") : `<p class="hint">暂无准备发布候选。可先导入自建 CF 或刷新优质池，人工验收后再标记发布。</p>`;
+  }
+  bindPublishCenterActions();
+}
+
+function publishCenterNodeCard(node = {}, state = "ready") {
+  const disabled = !!node.manual_disabled;
+  const published = state === "published" || !!node.publish_enabled;
+  const classes = ["node-card", "compact-node", published ? "published-node" : "", disabled ? "disabled-node" : ""].filter(Boolean).join(" ");
+  const source = sourceTypeLabel(node.source_type || "");
+  const cfLabel = node.cf_candidate ? "CF候选" : "普通候选";
+  return `
+    <article class="${classes}">
+      <div class="node-meta compact-node-meta">
+        <span class="protocol">${escapeHtml(node.protocol || "-")}</span>
+        <span>${published ? "已发布 ✓" : "准备发布"}</span>
+        <span>${escapeHtml(source)}</span>
+        <span>${escapeHtml(cfLabel)}</span>
+        <span>地区 ${escapeHtml(node.country || "未知")}</span>
+      </div>
+      <div class="node-name">${escapeHtml(node.server || "未知 server")} : ${escapeHtml(node.port || "-")}</div>
+      <div class="node-meta compact-node-meta">
+        <span>network ${escapeHtml(node.network || "-")}</span>
+        <span>TLS ${node.tls ? "yes" : "no"}</span>
+        <span>延迟 ${Number(node.seconds || 0).toFixed(2)} 秒</span>
+        <span>评分 ${Number(node.premium_score || 0).toFixed(2)}</span>
+        <span>最近 ${escapeHtml(node.last_checked_at || node.last_validated || "-")}</span>
+      </div>
+      <div class="node-meta compact-node-meta">
+        <span>source_type ${escapeHtml(node.source_type || "-")}</span>
+        <span>source_pool ${escapeHtml(node.source_pool || "-")}</span>
+        <span>note ${escapeHtml(node.manual_note || "-")}</span>
+      </div>
+      <div class="actions compact-actions">
+        <button class="ghost" data-valid-copy="${escapeHtml(node.uri || "")}" ${disabled ? "disabled" : ""}>复制节点</button>
+        ${published ? `<button class="ghost" disabled>已发布 ✓</button><button class="danger" data-publish-remove="${escapeHtml(node.uri || "")}">移出发布池</button>` : `<button class="primary" data-publish-mark="1" data-uri="${escapeHtml(node.uri || "")}" ${disabled || node.publish_compatible === false ? "disabled" : ""}>标记可发布</button>`}
+        <button class="ghost" data-valid-disable="${escapeHtml(node.uri || "")}" ${disabled ? "disabled" : ""}>禁用</button>
+        <button class="danger" data-valid-delete="${escapeHtml(node.uri || "")}">删除</button>
+      </div>
+    </article>
+  `;
+}
+
+function bindPublishCenterActions() {
+  document.querySelectorAll("#publishCenterPublished [data-valid-copy], #publishCenterReady [data-valid-copy]").forEach((button) => {
+    button.onclick = async () => {
+      await copyValidNodes({ uri: button.dataset.validCopy || "" });
+    };
+  });
+  document.querySelectorAll("#publishCenterPublished [data-publish-remove], #publishCenterReady [data-publish-remove]").forEach((button) => {
+    button.onclick = async () => {
+      const data = await post(api("/api/publish-pool/remove"), { uri: button.dataset.publishRemove || "" });
+      if (data) {
+        renderPublishPool(data);
+        await refreshPublishCenter();
+        await refreshNodes();
+        toast("已移出发布池");
+      }
+    };
+  });
+  document.querySelectorAll("#publishCenterReady [data-publish-mark]").forEach((button) => {
+    button.onclick = async () => {
+      const data = await post(api("/api/publish-pool/mark"), { uri: button.dataset.uri || "", publishable: true });
+      if (data) {
+        renderPublishPool(data);
+        await refreshPublishCenter();
+        await refreshNodes();
+        toast("已标记为可发布");
+      }
+    };
+  });
+  document.querySelectorAll("#publishCenterPublished [data-valid-disable], #publishCenterReady [data-valid-disable]").forEach((button) => {
+    button.onclick = async () => {
+      if (!confirm("确定禁用这个节点吗？禁用后会同步移出优质池、发布池并清空转换缓存。")) return;
+      await post(api("/api/valid-nodes/disable"), { uri: button.dataset.validDisable || "", reason: "manual_node_disable" });
+      await refreshPublishCenter();
+      await refreshNodes();
+      await refreshPublishPool();
+      toast("节点已禁用");
+    };
+  });
+  document.querySelectorAll("#publishCenterPublished [data-valid-delete], #publishCenterReady [data-valid-delete]").forEach((button) => {
+    button.onclick = async () => {
+      if (!confirm("确定删除这个节点吗？删除后会同步移出优质池、发布池并清空转换缓存。")) return;
+      await post(api("/api/valid-nodes/delete"), { uri: button.dataset.validDelete || "", reason: "manual_node_delete" });
+      await refreshPublishCenter();
+      await refreshNodes();
+      await refreshPublishPool();
+      toast("节点已删除");
+    };
+  });
+}
+
 async function refreshNodes() {
   try {
     const protocol = encodeURIComponent($("validProtocol").value);
@@ -1199,6 +1329,7 @@ async function importManualNodes() {
     await refreshStatus();
     await refreshNodes();
     await refreshPublishPool();
+    await refreshPublishCenter();
   } catch (error) {
     toast(error.message);
   }
@@ -1255,6 +1386,7 @@ function bindValidNodeActions() {
       const data = await post(api("/api/publish-pool/mark"), { uri: button.dataset.validPublish || "", publishable: true });
       if (data) {
         renderPublishPool(data);
+        await refreshPublishCenter();
         await refreshNodes();
         toast("已标记为可发布");
       }
@@ -1265,6 +1397,7 @@ function bindValidNodeActions() {
       const data = await post(api("/api/publish-pool/remove"), { uri: button.dataset.validUnpublish || "" });
       if (data) {
         renderPublishPool(data);
+        await refreshPublishCenter();
         await refreshNodes();
         toast("已移出发布池");
       }
@@ -1275,6 +1408,7 @@ function bindValidNodeActions() {
       await post(api("/api/valid-nodes/remove-premium"), { uri: button.dataset.validPremiumRemove || "" });
       await refreshNodes();
       await refreshPublishPool();
+      await refreshPublishCenter();
       toast("已移出优质池");
     };
   });
@@ -1284,6 +1418,7 @@ function bindValidNodeActions() {
       await post(api("/api/valid-nodes/disable"), { uri: button.dataset.validDisable || "", reason: "manual_node_disable" });
       await refreshNodes();
       await refreshPublishPool();
+      await refreshPublishCenter();
       toast("节点已禁用");
     };
   });
@@ -1293,6 +1428,7 @@ function bindValidNodeActions() {
       await post(api("/api/valid-nodes/delete"), { uri: button.dataset.validDelete || "", reason: "manual_node_delete" });
       await refreshNodes();
       await refreshPublishPool();
+      await refreshPublishCenter();
       toast("节点已删除");
     };
   });
@@ -1471,6 +1607,8 @@ function bindPublishPoolActions() {
       const data = await post(api("/api/publish-pool/mark"), { uri: button.dataset.uri || "", publishable });
       if (data) {
         renderPublishPool(data);
+        await refreshPublishCenter();
+        await refreshNodes();
         toast(publishable ? "已标记为可发布" : "已标记为不可发布");
       }
     };
@@ -1480,6 +1618,8 @@ function bindPublishPoolActions() {
       const data = await post(api("/api/publish-pool/remove"), { uri: button.dataset.publishRemove || "" });
       if (data) {
         renderPublishPool(data);
+        await refreshPublishCenter();
+        await refreshNodes();
         toast("已移出发布池");
       }
     };
@@ -2273,6 +2413,7 @@ $("clearLogs").onclick = async () => {
   renderLogs();
 };
 $("refreshNodes").onclick = refreshNodes;
+$("refreshPublishCenter").onclick = refreshPublishCenter;
 $("importManualNodes").onclick = importManualNodes;
 $("copyFilteredNodes").onclick = copyFilteredNodes;
 $("refreshProfiles").onclick = refreshProfiles;
@@ -2289,6 +2430,8 @@ $("clearPublishPool").onclick = async () => {
   const data = await post(api("/api/publish-pool/clear"));
   if (data) {
     renderPublishPool(data);
+    await refreshPublishCenter();
+    await refreshNodes();
     toast("发布池已清空");
   }
 };
@@ -2350,6 +2493,7 @@ async function startDashboard() {
     refreshRepos(),
     refreshProfiles(),
     refreshNodes(),
+    refreshPublishCenter(),
     refreshProcessingConfig(),
     refreshProcessingPreview(),
     refreshSubscriptions(),

@@ -920,6 +920,40 @@
             <button class="ghost" id="refreshNodes">刷新</button>
           </div>
         </div>
+        <div class="publish-center-shell">
+          <div class="section-heading compact">
+            <div>
+              <h3>发布中心</h3>
+              <span class="hint">Bot 当前只会发放“正在发布”里的节点；有效库存和优质候选不会自动发给粉丝。</span>
+            </div>
+            <button class="ghost" id="refreshPublishCenter">刷新发布中心</button>
+          </div>
+          <div class="publish-summary-grid">
+            <article><span>正在发布</span><strong id="publishCenterPublishedCount">0</strong><small>publish_subscription_pool</small></article>
+            <article><span>准备发布</span><strong id="publishCenterReadyCount">0</strong><small>优质候选 / 自建CF</small></article>
+            <article><span>有效库存</span><strong id="publishCenterValidCount">0</strong><small>服务器验证通过</small></article>
+            <article><span>自建CF</span><strong id="publishCenterManualCfCount">0</strong><small>source_type=manual_cf</small></article>
+            <article><span>GitHub公开</span><strong id="publishCenterGithubCount">0</strong><small>公开来源库存</small></article>
+            <article><span>CF候选</span><strong id="publishCenterCfCandidateCount">0</strong><small>cf_candidate=1</small></article>
+            <article><span>已禁用</span><strong id="publishCenterDisabledCount">0</strong><small>不可发布</small></article>
+          </div>
+          <div class="publish-columns">
+            <article class="publish-column published">
+              <div class="section-heading compact">
+                <h3>正在发布节点</h3>
+                <span class="hint">这里是 Bot 唯一允许发放的节点集合。</span>
+              </div>
+              <div class="profile-list publish-center-list" id="publishCenterPublished"></div>
+            </article>
+            <article class="publish-column ready">
+              <div class="section-heading compact">
+                <h3>准备发布 / 待人工验收</h3>
+                <span class="hint">复制到本地客户端测试 Google / YouTube 后，再标记可发布。</span>
+              </div>
+              <div class="profile-list publish-center-list" id="publishCenterReady"></div>
+            </article>
+          </div>
+        </div>
         <div class="notice-card">手动添加节点只进入有效节点库，不会自动发布给粉丝。需要本地测试后再点“标记可发布”。</div>
         <div class="form-grid two">
           <label>批量粘贴节点

@@ -391,6 +391,38 @@ class NodeDatabaseTest(unittest.TestCase):
                 self.assertEqual([row["uri"] for row in rows], [enabled_uri])
                 self.assertEqual(database.publish_pool_count(), 1)
 
+    def test_publish_center_summary_published_and_ready_layers(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "nodes.db"
+            published_uri = "vless://11111111-1111-1111-1111-111111111111@published.example.com:443?type=ws&security=tls#HK"
+            premium_ready_uri = "vless://22222222-2222-2222-2222-222222222222@ready.example.com:443?type=ws&security=tls#JP"
+            manual_cf_uri = "vless://33333333-3333-3333-3333-333333333333@cf.example.com:443?type=ws&host=demo.workers.dev&security=tls#CF"
+            disabled_uri = "trojan://secret@disabled.example.com:443#SG"
+            with NodeDatabase(path) as database:
+                database.upsert_valid_node(published_uri, "ok", 0.1, "203.0.113.10", "HK")
+                database.upsert_valid_node(premium_ready_uri, "ok", 0.2, "203.0.113.11", "JP")
+                database.import_manual_valid_nodes(manual_cf_uri, "manual cf", "manual_cf")
+                database.upsert_valid_node(disabled_uri, "ok", 0.3, "203.0.113.12", "SG")
+                database.refresh_premium_subscription_pool(10)
+                database.mark_publish_node(published_uri, True)
+                database.disable_valid_node(disabled_uri, "manual bad")
+
+                summary = database.publish_center_summary()
+                published = database.publish_center_published()
+                ready = database.publish_center_ready()
+
+                self.assertEqual(summary["published_count"], 1)
+                self.assertEqual(summary["valid_count"], 3)
+                self.assertEqual(summary["manual_cf_count"], 1)
+                self.assertEqual(summary["cf_candidate_count"], 1)
+                self.assertGreaterEqual(summary["ready_count"], 2)
+                self.assertEqual([row["uri"] for row in published], [published_uri])
+                ready_uris = {row["uri"] for row in ready}
+                self.assertIn(premium_ready_uri, ready_uris)
+                self.assertIn(manual_cf_uri, ready_uris)
+                self.assertNotIn(published_uri, ready_uris)
+                self.assertNotIn(disabled_uri, ready_uris)
+
     def test_manual_import_valid_nodes_deduplicates_and_rejects_bad_lines(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "nodes.db"

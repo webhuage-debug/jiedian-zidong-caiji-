@@ -779,6 +779,21 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if route == "/api/publish-pool":
             with NodeDatabase(DATABASE) as database:
                 return self.send_json(database.publish_pool_candidates())
+        if route == "/api/publish-center/summary":
+            with NodeDatabase(DATABASE) as database:
+                return self.send_json({"ok": True, **database.publish_center_summary()})
+        if route == "/api/publish-center/published":
+            query = urllib.parse.parse_qs(parsed.query)
+            limit = min(500, max(1, int(query.get("limit", ["120"])[0])))
+            with NodeDatabase(DATABASE) as database:
+                nodes = database.publish_center_published(limit)
+                return self.send_json({"ok": True, "count": len(nodes), "nodes": nodes})
+        if route == "/api/publish-center/ready":
+            query = urllib.parse.parse_qs(parsed.query)
+            limit = min(500, max(1, int(query.get("limit", ["120"])[0])))
+            with NodeDatabase(DATABASE) as database:
+                nodes = database.publish_center_ready(limit)
+                return self.send_json({"ok": True, "count": len(nodes), "nodes": nodes})
         if route == "/api/subscription-converter/config":
             with NodeDatabase(DATABASE) as database:
                 return self.send_json({

@@ -601,6 +601,49 @@ class WebAppRoutingTest(unittest.TestCase):
             finally:
                 web_app.DATABASE = original_database
 
+    def test_publish_center_api_returns_layered_counts_and_lists(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "nodes.db"
+            original_database = web_app.DATABASE
+            try:
+                web_app.DATABASE = database_path
+                published_uri = "vless://11111111-1111-1111-1111-111111111111@api-published.example.com:443?type=ws&security=tls#HK"
+                ready_uri = "vless://22222222-2222-2222-2222-222222222222@api-ready.example.com:443?type=ws&security=tls#JP"
+                manual_cf_uri = "vless://33333333-3333-3333-3333-333333333333@api-cf.example.com:443?type=ws&host=demo.workers.dev&security=tls#CF"
+                with NodeDatabase(database_path) as database:
+                    database.upsert_valid_node(published_uri, "ok", 0.1, "203.0.113.60", "HK")
+                    database.upsert_valid_node(ready_uri, "ok", 0.2, "203.0.113.61", "JP")
+                    database.import_manual_valid_nodes(manual_cf_uri, "api cf", "manual_cf")
+                    database.refresh_premium_subscription_pool(10)
+                    database.mark_publish_node(published_uri, True)
+
+                def call(path):
+                    handler = object.__new__(DashboardHandler)
+                    handler.path = ADMIN_BASE_PATH + path
+                    handler.current_user = lambda: {"id": 1, "username": "admin"}
+                    responses = []
+                    handler.send_json = lambda payload, status=HTTPStatus.OK, headers=None: responses.append((payload, status))
+                    handler.do_GET()
+                    return responses[-1]
+
+                summary, summary_status = call("/api/publish-center/summary")
+                published, published_status = call("/api/publish-center/published")
+                ready, ready_status = call("/api/publish-center/ready")
+
+                self.assertEqual(summary_status, HTTPStatus.OK)
+                self.assertEqual(published_status, HTTPStatus.OK)
+                self.assertEqual(ready_status, HTTPStatus.OK)
+                self.assertTrue(summary["ok"])
+                self.assertEqual(summary["published_count"], 1)
+                self.assertGreaterEqual(summary["ready_count"], 2)
+                self.assertEqual([node["uri"] for node in published["nodes"]], [published_uri])
+                ready_uris = {node["uri"] for node in ready["nodes"]}
+                self.assertIn(ready_uri, ready_uris)
+                self.assertIn(manual_cf_uri, ready_uris)
+                self.assertNotIn(published_uri, ready_uris)
+            finally:
+                web_app.DATABASE = original_database
+
     def test_manual_valid_node_api_imports_and_disable_clears_output_pools(self):
         with tempfile.TemporaryDirectory() as directory:
             database_path = Path(directory) / "nodes.db"

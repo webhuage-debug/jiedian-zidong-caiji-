@@ -2691,6 +2691,155 @@ class NodeDatabase:
             "SELECT COUNT(*) FROM publish_subscription_pool WHERE publish_enabled = 1 AND manual_status = 'publishable'"
         ).fetchone()[0])
 
+    def publish_center_summary(self) -> Dict[str, int]:
+        published_count = int(self.connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM publish_subscription_pool pub
+            LEFT JOIN "有效节点" v ON v.uri = pub.uri
+            WHERE pub.publish_enabled = 1
+              AND pub.manual_status = 'publishable'
+              AND COALESCE(v.manual_disabled, 0) = 0
+              AND COALESCE(pub.uri, '') != ''
+            """
+        ).fetchone()[0])
+        valid_count = int(self.connection.execute('SELECT COUNT(*) FROM "有效节点" WHERE manual_disabled = 0').fetchone()[0])
+        manual_cf_count = int(self.connection.execute(
+            'SELECT COUNT(*) FROM "有效节点" WHERE source_type = ? AND manual_disabled = 0',
+            ("manual_cf",),
+        ).fetchone()[0])
+        github_public_count = int(self.connection.execute(
+            'SELECT COUNT(*) FROM "有效节点" WHERE source_type IN (?, ?) AND manual_disabled = 0',
+            ("github_public", "validator"),
+        ).fetchone()[0])
+        cf_candidate_count = int(self.connection.execute(
+            'SELECT COUNT(*) FROM "有效节点" WHERE cf_candidate = 1 AND manual_disabled = 0'
+        ).fetchone()[0])
+        disabled_count = int(self.connection.execute(
+            'SELECT COUNT(*) FROM "有效节点" WHERE manual_disabled = 1'
+        ).fetchone()[0])
+        blocked_count = int(self.connection.execute("SELECT COUNT(*) FROM manual_blocked_nodes").fetchone()[0])
+        subscription_link_count = int(self.connection.execute(
+            'SELECT COUNT(*) FROM "订阅链接" WHERE enabled = 1'
+        ).fetchone()[0])
+        conversion_cache_count = int(self.connection.execute(
+            "SELECT COUNT(*) FROM subscription_conversion_cache"
+        ).fetchone()[0])
+        ready_count = int(self.connection.execute(
+            """
+            SELECT COUNT(*) FROM (
+                SELECT v.uri
+                FROM premium_subscription_pool p
+                JOIN "有效节点" v ON v.uri = p.uri
+                LEFT JOIN publish_subscription_pool pub ON pub.uri = v.uri
+                WHERE v.manual_disabled = 0
+                  AND (pub.uri IS NULL OR pub.publish_enabled != 1 OR pub.manual_status != 'publishable')
+                UNION
+                SELECT v.uri
+                FROM "有效节点" v
+                LEFT JOIN publish_subscription_pool pub ON pub.uri = v.uri
+                WHERE v.manual_disabled = 0
+                  AND v.source_type = 'manual_cf'
+                  AND (pub.uri IS NULL OR pub.publish_enabled != 1 OR pub.manual_status != 'publishable')
+            )
+            """
+        ).fetchone()[0])
+        return {
+            "published_count": published_count,
+            "publish_enabled_count": published_count,
+            "ready_count": ready_count,
+            "valid_count": valid_count,
+            "manual_cf_count": manual_cf_count,
+            "github_public_count": github_public_count,
+            "cf_candidate_count": cf_candidate_count,
+            "disabled_count": disabled_count + blocked_count,
+            "manual_blocked_count": blocked_count,
+            "subscription_link_count": subscription_link_count,
+            "conversion_cache_count": conversion_cache_count,
+        }
+
+    def publish_center_published(self, limit: int = 120) -> List[Dict[str, object]]:
+        limit = max(1, min(int(limit or 120), 500))
+        rows = self.connection.execute(
+            """
+            SELECT COALESCE(v.uri, pub.uri), COALESCE(v.protocol, pub.protocol, ''),
+                   COALESCE(v.proxy_ips, ''), COALESCE(v.seconds, 0),
+                   COALESCE(v.last_validated, pub.last_checked_at, pub.updated_at),
+                   COALESCE(v.validation_count, 0), COALESCE(v.country, ''),
+                   COALESCE(v.node_fingerprint, ''), COALESCE(v.source_type, pub.source_pool, ''),
+                   COALESCE(v.manual_added, 0), COALESCE(v.manual_disabled, 0),
+                   COALESCE(v.manual_note, pub.manual_note, ''), v.disabled_at,
+                   COALESCE(v.disabled_reason, ''), COALESCE(v.cf_candidate, 0),
+                   pub.source_pool, pub.manual_status, pub.publish_enabled, pub.manual_note,
+                   pub.last_checked_at, pub.created_at, pub.updated_at
+            FROM publish_subscription_pool pub
+            LEFT JOIN "有效节点" v ON v.uri = pub.uri
+            WHERE pub.publish_enabled = 1
+              AND pub.manual_status = 'publishable'
+              AND COALESCE(v.manual_disabled, 0) = 0
+              AND COALESCE(pub.uri, '') != ''
+            ORDER BY pub.updated_at DESC, COALESCE(v.seconds, 9999) ASC, COALESCE(v.validation_count, 0) DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+        nodes = []
+        for row in rows:
+            item = self._valid_node_row(row[:15])
+            item.update(uri_metadata(str(item.get("uri") or "")))
+            item["source_pool"] = row[15] or "publish_pool"
+            item["manual_status"] = row[16] or ""
+            item["publish_enabled"] = bool(row[17])
+            item["manual_note"] = row[18] or item.get("manual_note") or ""
+            item["last_checked_at"] = row[19] or item.get("last_validated") or ""
+            item["created_at"] = row[20] or ""
+            item["updated_at"] = row[21] or ""
+            item["published"] = True
+            nodes.append(self._publish_display_row(item))
+        return nodes
+
+    def publish_center_ready(self, limit: int = 120) -> List[Dict[str, object]]:
+        limit = max(1, min(int(limit or 120), 500))
+        rows = self.connection.execute(
+            """
+            SELECT * FROM (
+                SELECT v.uri, v.protocol, v.proxy_ips, v.seconds, v.last_validated, v.validation_count,
+                       v.country, v.node_fingerprint, v.source_type, v.manual_added, v.manual_disabled,
+                       v.manual_note, v.disabled_at, v.disabled_reason, v.cf_candidate,
+                       p.score AS premium_score, p.reason AS premium_reason, 1 AS premium_rank
+                FROM premium_subscription_pool p
+                JOIN "有效节点" v ON v.uri = p.uri
+                LEFT JOIN publish_subscription_pool pub ON pub.uri = v.uri
+                WHERE v.manual_disabled = 0
+                  AND (pub.uri IS NULL OR pub.publish_enabled != 1 OR pub.manual_status != 'publishable')
+                UNION
+                SELECT v.uri, v.protocol, v.proxy_ips, v.seconds, v.last_validated, v.validation_count,
+                       v.country, v.node_fingerprint, v.source_type, v.manual_added, v.manual_disabled,
+                       v.manual_note, v.disabled_at, v.disabled_reason, v.cf_candidate,
+                       0 AS premium_score, 'manual_cf_ready' AS premium_reason, 2 AS premium_rank
+                FROM "有效节点" v
+                LEFT JOIN publish_subscription_pool pub ON pub.uri = v.uri
+                WHERE v.manual_disabled = 0
+                  AND v.source_type = 'manual_cf'
+                  AND (pub.uri IS NULL OR pub.publish_enabled != 1 OR pub.manual_status != 'publishable')
+            )
+            GROUP BY uri
+            ORDER BY premium_rank ASC, premium_score DESC, seconds ASC, validation_count DESC, last_validated DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+        ready = []
+        for row in rows:
+            item = self._valid_node_row(row[:15])
+            item["premium_score"] = row[15]
+            item["premium_reason"] = row[16]
+            item["manual_status"] = ""
+            item["publish_enabled"] = False
+            item.update(uri_metadata(str(item.get("uri") or "")))
+            ready.append(self._publish_display_row(item))
+        return ready
+
     def publish_pool_candidates(self, limit: int = 80) -> Dict[str, object]:
         limit = max(1, min(int(limit or 80), 200))
         rows = self.connection.execute(
@@ -2753,6 +2902,11 @@ class NodeDatabase:
             "cf_candidate": bool(row.get("cf_candidate")),
             "publish_compatible": bool(row.get("publish_compatible")),
             "publish_block_reason": str(row.get("publish_block_reason") or ""),
+            "published": bool(row.get("published") or row.get("publish_enabled")),
+            "source_pool": str(row.get("source_pool") or ""),
+            "created_at": str(row.get("created_at") or ""),
+            "updated_at": str(row.get("updated_at") or ""),
+            "last_checked_at": str(row.get("last_checked_at") or row.get("last_validated") or ""),
         }
 
     def mark_publish_node(self, uri: str, publishable: bool = True, note: str = "") -> Dict[str, object]:
