@@ -362,6 +362,82 @@ class WebAppRoutingTest(unittest.TestCase):
             finally:
                 web_app.DATABASE = original_database
 
+    def test_public_subscription_base64_exports_publish_pool_uri(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "nodes.db"
+            original_database = web_app.DATABASE
+            try:
+                web_app.DATABASE = database_path
+                uri = "vless://55555555-5555-5555-5555-555555555555@public-cf.example.com:443?type=ws&security=tls#CF"
+                with NodeDatabase(database_path) as database:
+                    database.update_claim_code_config({"version": "v-pub", "enabled": True})
+                    database.create_subscription_link(
+                        "pub-token",
+                        "public",
+                        "usage",
+                        max_uses=10,
+                        export_limit=10,
+                        claim_code_version="v-pub",
+                    )
+                    database.connection.execute(
+                        """
+                        INSERT INTO publish_subscription_pool (uri, protocol, server, port, manual_status, publish_enabled)
+                        VALUES (?, 'vless', 'public-cf.example.com', '443', 'publishable', 1)
+                        """,
+                        (uri,),
+                    )
+                    database.connection.commit()
+                handler = object.__new__(DashboardHandler)
+                handler.path = "/sub/pub-token"
+                handler.headers = {}
+                handler.client_address = ("127.0.0.1", 12345)
+                responses = []
+                handler.send_text = lambda text, content_type, status=HTTPStatus.OK: responses.append((text, content_type, status))
+                handler.send_json = lambda payload, status=HTTPStatus.OK, headers=None: responses.append((payload, "json", status))
+
+                handler.public_subscription("/sub/pub-token")
+
+                self.assertEqual(responses[-1][2], HTTPStatus.OK)
+                self.assertEqual(responses[-1][1], "text/plain; charset=utf-8")
+                decoded = base64.b64decode(responses[-1][0].strip()).decode("utf-8")
+                self.assertIn("vless://", decoded)
+                self.assertIn("public-cf.example.com", decoded)
+                self.assertGreater(len(decoded.splitlines()), 0)
+            finally:
+                web_app.DATABASE = original_database
+
+    def test_public_subscription_usage_limit_returns_explicit_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "nodes.db"
+            original_database = web_app.DATABASE
+            try:
+                web_app.DATABASE = database_path
+                with NodeDatabase(database_path) as database:
+                    database.update_claim_code_config({"version": "v-limit", "enabled": True})
+                    database.create_subscription_link(
+                        "limit-token",
+                        "limit",
+                        "usage",
+                        max_uses=1,
+                        export_limit=10,
+                        claim_code_version="v-limit",
+                    )
+                    database.connection.execute('UPDATE "订阅链接" SET used_count = 1 WHERE token = ?', ("limit-token",))
+                    database.connection.commit()
+                handler = object.__new__(DashboardHandler)
+                handler.path = "/sub/limit-token"
+                handler.headers = {}
+                handler.client_address = ("127.0.0.1", 12345)
+                responses = []
+                handler.send_json = lambda payload, status=HTTPStatus.OK, headers=None: responses.append((payload, status))
+
+                handler.public_subscription("/sub/limit-token")
+
+                self.assertEqual(responses[-1][1], HTTPStatus.GONE)
+                self.assertIn("最大访问次数", responses[-1][0]["error"])
+            finally:
+                web_app.DATABASE = original_database
+
     def test_subscription_output_applies_final_region_filter_to_all_targets(self):
         with tempfile.TemporaryDirectory() as directory:
             database_path = Path(directory) / "nodes.db"
@@ -429,6 +505,23 @@ class WebAppRoutingTest(unittest.TestCase):
                 self.assertNotIn("uk@example.com", captured["content"])
                 self.assertNotIn("ru@example.com", captured["content"])
                 self.assertNotIn("ad@example.com", captured["content"])
+
+    def test_subscription_conversion_empty_publish_pool_has_clear_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "nodes.db"
+            with NodeDatabase(database_path) as database:
+                database.update_claim_code_config({"version": "v-empty", "enabled": True})
+                link = database.create_subscription_link(
+                    "empty-token",
+                    "empty",
+                    "usage",
+                    export_limit=30,
+                    claim_code_version="v-empty",
+                )
+                handler = object.__new__(DashboardHandler)
+
+                with self.assertRaisesRegex(ValueError, "发布池没有可导出的节点"):
+                    handler.subscription_output(database, link, database.claim_code_config(), "clash-verge")
 
     def test_subscription_converter_input_has_unique_node_names(self):
         with tempfile.TemporaryDirectory() as directory:

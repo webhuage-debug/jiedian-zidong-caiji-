@@ -1253,6 +1253,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
         converter_config["export_limit"] = limit
         converter_config["prefer_asia"] = True
         content = "\n".join(str(row["uri"]) for row in rows)
+        if not content.strip():
+            raise ValueError("发布池没有可导出的节点")
         input_mode = "subscription_link"
         input_type = "mixed"
         input_bytes = len(content.encode("utf-8"))
@@ -2123,7 +2125,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if link["mode"] in ("usage", "either"):
             max_uses = int(link["max_uses"] or 0)
             if max_uses <= 0 or int(link["used_count"] or 0) >= max_uses:
-                return False, HTTPStatus.GONE, "订阅链接使用次数已用完"
+                return False, HTTPStatus.GONE, "订阅链接已达到最大访问次数，请重新领取。"
         if link["mode"] in ("time", "either"):
             expires_at = str(link.get("expires_at") or "")
             if not expires_at:

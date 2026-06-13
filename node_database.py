@@ -2821,14 +2821,20 @@ class NodeDatabase:
         limit = max(1, min(int(limit or DEFAULT_SUBSCRIPTION_TARGET), MAX_SUBSCRIPTION_TARGET))
         rows = self.connection.execute(
             """
-            SELECT v.uri, v.protocol, v.proxy_ips, v.seconds, v.last_validated, v.validation_count,
-                   v.country, v.node_fingerprint, v.source_type, v.manual_added, v.manual_disabled,
-                   v.manual_note, v.disabled_at, v.disabled_reason, v.cf_candidate,
+            SELECT COALESCE(v.uri, pub.uri), COALESCE(v.protocol, pub.protocol, ''), COALESCE(v.proxy_ips, ''),
+                   COALESCE(v.seconds, 0), COALESCE(v.last_validated, pub.last_checked_at, pub.updated_at),
+                   COALESCE(v.validation_count, 0), COALESCE(v.country, ''), COALESCE(v.node_fingerprint, ''),
+                   COALESCE(v.source_type, pub.source_pool, ''), COALESCE(v.manual_added, 0),
+                   COALESCE(v.manual_disabled, 0), COALESCE(v.manual_note, ''), v.disabled_at,
+                   COALESCE(v.disabled_reason, ''), COALESCE(v.cf_candidate, 0),
                    pub.manual_status, pub.manual_note, pub.updated_at
             FROM publish_subscription_pool pub
-            JOIN "有效节点" v ON v.uri = pub.uri
-            WHERE pub.publish_enabled = 1 AND pub.manual_status = 'publishable' AND v.manual_disabled = 0
-            ORDER BY pub.updated_at DESC, v.seconds ASC, v.validation_count DESC
+            LEFT JOIN "有效节点" v ON v.uri = pub.uri
+            WHERE pub.publish_enabled = 1
+              AND pub.manual_status = 'publishable'
+              AND COALESCE(v.manual_disabled, 0) = 0
+              AND COALESCE(pub.uri, '') != ''
+            ORDER BY pub.updated_at DESC, COALESCE(v.seconds, 9999) ASC, COALESCE(v.validation_count, 0) DESC
             LIMIT ?
             """,
             (limit,),
@@ -2844,7 +2850,7 @@ class NodeDatabase:
             item["manual_note"] = row[16]
             item["publish_updated_at"] = row[17]
             result.append(item)
-        return final_subscription_nodes(result, limit)
+        return result[:limit]
 
     def export_publish_subscription_nodes(self, limit: int = DEFAULT_SUBSCRIPTION_TARGET) -> List[Dict[str, object]]:
         return self.publish_pool_nodes(normalize_subscription_limit(limit))

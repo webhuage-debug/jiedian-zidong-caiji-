@@ -361,6 +361,36 @@ class NodeDatabaseTest(unittest.TestCase):
                 database.mark_publish_node(publish_uri, False)
                 self.assertEqual(database.export_publish_subscription_nodes(10), [])
 
+    def test_publish_pool_exports_enabled_uri_without_region_fallback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "nodes.db"
+            enabled_uri = "vless://11111111-1111-1111-1111-111111111111@cf-worker.example.com:443?type=ws&security=tls#CF"
+            disabled_uri = "vless://22222222-2222-2222-2222-222222222222@disabled.example.com:443?type=ws&security=tls#Disabled"
+            removed_uri = "vless://33333333-3333-3333-3333-333333333333@removed.example.com:443?type=ws&security=tls#Removed"
+            with NodeDatabase(path) as database:
+                database.connection.execute(
+                    """
+                    INSERT INTO publish_subscription_pool (uri, protocol, server, port, manual_status, publish_enabled)
+                    VALUES (?, 'vless', 'cf-worker.example.com', '443', 'publishable', 1)
+                    """,
+                    (enabled_uri,),
+                )
+                database.connection.execute(
+                    """
+                    INSERT INTO publish_subscription_pool (uri, protocol, server, port, manual_status, publish_enabled)
+                    VALUES (?, 'vless', 'disabled.example.com', '443', 'publishable', 0)
+                    """,
+                    (disabled_uri,),
+                )
+                database.upsert_valid_node(removed_uri, "ok", 0.1, "203.0.113.9", "")
+                database.mark_publish_node(removed_uri, True)
+                database.disable_valid_node(removed_uri, "manual bad")
+
+                rows = database.export_publish_subscription_nodes(10)
+
+                self.assertEqual([row["uri"] for row in rows], [enabled_uri])
+                self.assertEqual(database.publish_pool_count(), 1)
+
     def test_manual_import_valid_nodes_deduplicates_and_rejects_bad_lines(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "nodes.db"
