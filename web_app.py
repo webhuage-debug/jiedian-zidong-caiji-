@@ -786,14 +786,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
             query = urllib.parse.parse_qs(parsed.query)
             limit = min(500, max(1, int(query.get("limit", ["120"])[0])))
             with NodeDatabase(DATABASE) as database:
-                nodes = database.publish_center_published(limit)
-                return self.send_json({"ok": True, "count": len(nodes), "nodes": nodes})
+                all_nodes = database.publish_center_published(10000)
+                return self.send_json({"ok": True, "count": len(all_nodes), "nodes": all_nodes[:limit]})
         if route == "/api/publish-center/ready":
             query = urllib.parse.parse_qs(parsed.query)
             limit = min(500, max(1, int(query.get("limit", ["120"])[0])))
             with NodeDatabase(DATABASE) as database:
-                nodes = database.publish_center_ready(limit)
-                return self.send_json({"ok": True, "count": len(nodes), "nodes": nodes})
+                all_nodes = database.publish_center_ready(10000)
+                return self.send_json({"ok": True, "count": len(all_nodes), "nodes": all_nodes[:limit]})
         if route == "/api/subscription-converter/config":
             with NodeDatabase(DATABASE) as database:
                 return self.send_json({
@@ -1324,12 +1324,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def mark_publish_pool(self, payload: dict) -> None:
         uri = str(payload.get("uri") or "").strip()
+        node_ref = str(payload.get("node_ref") or "").strip()
         publishable = bool(payload.get("publishable", True))
         note = str(payload.get("note") or "").strip()
-        if not uri:
-            return self.send_json({"error": "缺少节点标识"}, HTTPStatus.BAD_REQUEST)
         try:
             with NodeDatabase(DATABASE) as database:
+                uri = uri or database.resolve_node_reference(node_ref)
+                if not uri:
+                    return self.send_json({"error": "缺少节点标识"}, HTTPStatus.BAD_REQUEST)
                 row = database.mark_publish_node(uri, publishable, note)
                 overview = database.publish_pool_candidates()
         except ValueError as exc:
@@ -1339,9 +1341,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def remove_publish_pool(self, payload: dict) -> None:
         uri = str(payload.get("uri") or "").strip()
-        if not uri:
-            return self.send_json({"error": "缺少节点标识"}, HTTPStatus.BAD_REQUEST)
+        node_ref = str(payload.get("node_ref") or "").strip()
         with NodeDatabase(DATABASE) as database:
+            uri = uri or database.resolve_node_reference(node_ref)
+            if not uri:
+                return self.send_json({"error": "缺少节点标识"}, HTTPStatus.BAD_REQUEST)
             removed = database.remove_publish_node(uri)
             overview = database.publish_pool_candidates()
         LOG_BUS.emit("subscription", "发布池移除节点 | removed=" + str(int(bool(removed))), "info")
@@ -1379,11 +1383,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def copy_valid_nodes(self, payload: dict) -> None:
         uri = str(payload.get("uri") or "").strip()
+        node_ref = str(payload.get("node_ref") or "").strip()
         protocol = str(payload.get("protocol") or "").strip().lower()
         country = str(payload.get("country") or "").strip().upper()
         group = str(payload.get("group") or "").strip().lower()
         limit = int_value(payload, "limit", 200, 1, 1000)
         with NodeDatabase(DATABASE) as database:
+            uri = uri or database.resolve_node_reference(node_ref)
             uris = database.copyable_valid_node_uris(limit, protocol, country, group, uri)
         LOG_BUS.emit("validator", "manual_node_copy | count=" + str(len(uris)) + " operator=admin", "info")
         return self.send_json({
@@ -1393,11 +1399,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def disable_valid_node(self, payload: dict) -> None:
         uri = str(payload.get("uri") or "").strip()
+        node_ref = str(payload.get("node_ref") or "").strip()
         reason = str(payload.get("reason") or "manual_node_disable").strip()
-        if not uri:
-            return self.send_json({"error": "缺少节点标识"}, HTTPStatus.BAD_REQUEST)
         try:
             with NodeDatabase(DATABASE) as database:
+                uri = uri or database.resolve_node_reference(node_ref)
+                if not uri:
+                    return self.send_json({"error": "缺少节点标识"}, HTTPStatus.BAD_REQUEST)
                 result = database.disable_valid_node(uri, reason)
                 stats = database.stats()
         except ValueError as exc:
@@ -1407,11 +1415,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def delete_valid_node(self, payload: dict) -> None:
         uri = str(payload.get("uri") or "").strip()
+        node_ref = str(payload.get("node_ref") or "").strip()
         reason = str(payload.get("reason") or "manual_node_delete").strip()
-        if not uri:
-            return self.send_json({"error": "缺少节点标识"}, HTTPStatus.BAD_REQUEST)
         try:
             with NodeDatabase(DATABASE) as database:
+                uri = uri or database.resolve_node_reference(node_ref)
+                if not uri:
+                    return self.send_json({"error": "缺少节点标识"}, HTTPStatus.BAD_REQUEST)
                 result = database.delete_valid_node(uri, reason)
                 stats = database.stats()
         except ValueError as exc:
@@ -1421,9 +1431,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def remove_valid_node_premium(self, payload: dict) -> None:
         uri = str(payload.get("uri") or "").strip()
-        if not uri:
-            return self.send_json({"error": "缺少节点标识"}, HTTPStatus.BAD_REQUEST)
+        node_ref = str(payload.get("node_ref") or "").strip()
         with NodeDatabase(DATABASE) as database:
+            uri = uri or database.resolve_node_reference(node_ref)
+            if not uri:
+                return self.send_json({"error": "缺少节点标识"}, HTTPStatus.BAD_REQUEST)
             result = database.remove_from_premium_pool(uri)
             stats = database.stats()
         LOG_BUS.emit("validator", "manual_node_remove_premium | removed_from_premium_pool=" + str(result["removed_from_premium_pool"]) + " conversion_cache_cleared=true", "info")

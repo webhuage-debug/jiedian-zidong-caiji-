@@ -636,11 +636,26 @@ class WebAppRoutingTest(unittest.TestCase):
                 self.assertTrue(summary["ok"])
                 self.assertEqual(summary["published_count"], 1)
                 self.assertGreaterEqual(summary["ready_count"], 2)
-                self.assertEqual([node["uri"] for node in published["nodes"]], [published_uri])
-                ready_uris = {node["uri"] for node in ready["nodes"]}
-                self.assertIn(ready_uri, ready_uris)
-                self.assertIn(manual_cf_uri, ready_uris)
-                self.assertNotIn(published_uri, ready_uris)
+                self.assertEqual(published["count"], summary["published_count"])
+                self.assertEqual(ready["count"], summary["ready_count"])
+                self.assertNotIn("uri", published["nodes"][0])
+                self.assertNotIn("uri", ready["nodes"][0])
+                self.assertTrue(published["nodes"][0]["node_ref"])
+                ready_refs = {node["node_ref"] for node in ready["nodes"]}
+                with NodeDatabase(database_path) as database:
+                    self.assertIn(database.resolve_node_reference(next(iter(ready_refs))), {ready_uri, manual_cf_uri})
+
+                handler = object.__new__(DashboardHandler)
+                responses = []
+                handler.send_json = lambda payload, status=HTTPStatus.OK, headers=None: responses.append((payload, status))
+                ready_ref = next(node["node_ref"] for node in ready["nodes"] if node["server"] == "api-ready.example.com")
+                handler.mark_publish_pool({"node_ref": ready_ref, "publishable": True})
+                self.assertEqual(responses[-1][1], HTTPStatus.OK)
+
+                summary_after, _ = call("/api/publish-center/summary")
+                ready_after, _ = call("/api/publish-center/ready")
+                self.assertEqual(summary_after["published_count"], 2)
+                self.assertNotIn(ready_ref, {node["node_ref"] for node in ready_after["nodes"]})
             finally:
                 web_app.DATABASE = original_database
 

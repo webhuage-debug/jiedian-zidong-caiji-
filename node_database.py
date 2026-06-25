@@ -2692,24 +2692,22 @@ class NodeDatabase:
         ).fetchone()[0])
 
     def publish_center_summary(self) -> Dict[str, int]:
-        published_count = int(self.connection.execute(
-            """
-            SELECT COUNT(*)
-            FROM publish_subscription_pool pub
-            LEFT JOIN "有效节点" v ON v.uri = pub.uri
-            WHERE pub.publish_enabled = 1
-              AND pub.manual_status = 'publishable'
-              AND COALESCE(v.manual_disabled, 0) = 0
-              AND COALESCE(pub.uri, '') != ''
-            """
-        ).fetchone()[0])
+        published_count = len(self.publish_center_published(10000))
         valid_count = int(self.connection.execute('SELECT COUNT(*) FROM "有效节点" WHERE manual_disabled = 0').fetchone()[0])
         manual_cf_count = int(self.connection.execute(
             'SELECT COUNT(*) FROM "有效节点" WHERE source_type = ? AND manual_disabled = 0',
             ("manual_cf",),
         ).fetchone()[0])
         github_public_count = int(self.connection.execute(
-            'SELECT COUNT(*) FROM "有效节点" WHERE source_type IN (?, ?) AND manual_disabled = 0',
+            """
+            SELECT COUNT(*)
+            FROM "有效节点"
+            WHERE manual_disabled = 0
+              AND (
+                source_type IN (?, ?)
+                OR (manual_added = 0 AND COALESCE(source_type, '') IN ('', 'unknown'))
+              )
+            """,
             ("github_public", "validator"),
         ).fetchone()[0])
         cf_candidate_count = int(self.connection.execute(
@@ -2725,25 +2723,7 @@ class NodeDatabase:
         conversion_cache_count = int(self.connection.execute(
             "SELECT COUNT(*) FROM subscription_conversion_cache"
         ).fetchone()[0])
-        ready_count = int(self.connection.execute(
-            """
-            SELECT COUNT(*) FROM (
-                SELECT v.uri
-                FROM premium_subscription_pool p
-                JOIN "有效节点" v ON v.uri = p.uri
-                LEFT JOIN publish_subscription_pool pub ON pub.uri = v.uri
-                WHERE v.manual_disabled = 0
-                  AND (pub.uri IS NULL OR pub.publish_enabled != 1 OR pub.manual_status != 'publishable')
-                UNION
-                SELECT v.uri
-                FROM "有效节点" v
-                LEFT JOIN publish_subscription_pool pub ON pub.uri = v.uri
-                WHERE v.manual_disabled = 0
-                  AND v.source_type = 'manual_cf'
-                  AND (pub.uri IS NULL OR pub.publish_enabled != 1 OR pub.manual_status != 'publishable')
-            )
-            """
-        ).fetchone()[0])
+        ready_count = len(self.publish_center_ready(10000))
         return {
             "published_count": published_count,
             "publish_enabled_count": published_count,
@@ -2758,8 +2738,8 @@ class NodeDatabase:
             "conversion_cache_count": conversion_cache_count,
         }
 
-    def publish_center_published(self, limit: int = 120) -> List[Dict[str, object]]:
-        limit = max(1, min(int(limit or 120), 500))
+    def publish_center_published(self, limit: int = 120, expose_uri: bool = False) -> List[Dict[str, object]]:
+        limit = max(1, min(int(limit or 120), 10000))
         rows = self.connection.execute(
             """
             SELECT COALESCE(v.uri, pub.uri), COALESCE(v.protocol, pub.protocol, ''),
@@ -2784,9 +2764,14 @@ class NodeDatabase:
             (limit,),
         ).fetchall()
         nodes = []
+        seen_refs = set()
         for row in rows:
             item = self._valid_node_row(row[:15])
             item.update(uri_metadata(str(item.get("uri") or "")))
+            item["node_ref"] = str(item.get("node_fingerprint") or node_fingerprint(str(item.get("uri") or "")))
+            if item["node_ref"] in seen_refs:
+                continue
+            seen_refs.add(item["node_ref"])
             item["source_pool"] = row[15] or "publish_pool"
             item["manual_status"] = row[16] or ""
             item["publish_enabled"] = bool(row[17])
@@ -2795,11 +2780,11 @@ class NodeDatabase:
             item["created_at"] = row[20] or ""
             item["updated_at"] = row[21] or ""
             item["published"] = True
-            nodes.append(self._publish_display_row(item))
+            nodes.append(self._publish_center_display_row(item, expose_uri))
         return nodes
 
-    def publish_center_ready(self, limit: int = 120) -> List[Dict[str, object]]:
-        limit = max(1, min(int(limit or 120), 500))
+    def publish_center_ready(self, limit: int = 120, expose_uri: bool = False) -> List[Dict[str, object]]:
+        limit = max(1, min(int(limit or 120), 10000))
         rows = self.connection.execute(
             """
             SELECT * FROM (
@@ -2830,15 +2815,38 @@ class NodeDatabase:
             (limit,),
         ).fetchall()
         ready = []
+        seen_refs = set()
         for row in rows:
             item = self._valid_node_row(row[:15])
+            item["node_ref"] = str(item.get("node_fingerprint") or node_fingerprint(str(item.get("uri") or "")))
+            if item["node_ref"] in seen_refs:
+                continue
+            seen_refs.add(item["node_ref"])
             item["premium_score"] = row[15]
             item["premium_reason"] = row[16]
             item["manual_status"] = ""
             item["publish_enabled"] = False
             item.update(uri_metadata(str(item.get("uri") or "")))
-            ready.append(self._publish_display_row(item))
+            ready.append(self._publish_center_display_row(item, expose_uri))
         return ready
+
+    def resolve_node_reference(self, node_ref: str) -> str:
+        node_ref = str(node_ref or "").strip()
+        if not node_ref:
+            return ""
+        if "://" in node_ref:
+            return node_ref
+        row = self.connection.execute(
+            'SELECT uri FROM "有效节点" WHERE node_fingerprint = ? ORDER BY rowid DESC LIMIT 1',
+            (node_ref,),
+        ).fetchone()
+        if row:
+            return str(row[0])
+        for row in self.connection.execute("SELECT uri FROM publish_subscription_pool"):
+            uri = str(row[0] or "")
+            if node_fingerprint(uri) == node_ref:
+                return uri
+        return ""
 
     def publish_pool_candidates(self, limit: int = 80) -> Dict[str, object]:
         limit = max(1, min(int(limit or 80), 200))
@@ -2908,6 +2916,13 @@ class NodeDatabase:
             "updated_at": str(row.get("updated_at") or ""),
             "last_checked_at": str(row.get("last_checked_at") or row.get("last_validated") or ""),
         }
+
+    def _publish_center_display_row(self, row: Dict[str, object], expose_uri: bool = False) -> Dict[str, object]:
+        item = self._publish_display_row(row)
+        item["node_ref"] = str(row.get("node_ref") or row.get("node_fingerprint") or node_fingerprint(str(row.get("uri") or "")))
+        if not expose_uri:
+            item.pop("uri", None)
+        return item
 
     def mark_publish_node(self, uri: str, publishable: bool = True, note: str = "") -> Dict[str, object]:
         uri = str(uri or "").strip()

@@ -1141,8 +1141,8 @@ async function refreshPublishCenter() {
   try {
     const [summary, published, ready] = await Promise.all([
       jsonFetch(api("/api/publish-center/summary")),
-      jsonFetch(api("/api/publish-center/published?limit=80")),
-      jsonFetch(api("/api/publish-center/ready?limit=80")),
+      jsonFetch(api("/api/publish-center/published?limit=500")),
+      jsonFetch(api("/api/publish-center/ready?limit=500")),
     ]);
     renderPublishCenter(summary, published.nodes || [], ready.nodes || []);
   } catch (error) {
@@ -1160,18 +1160,35 @@ function renderPublishCenter(summary = {}, published = [], ready = []) {
   setText("publishCenterDisabledCount", Number(summary.disabled_count || 0).toLocaleString());
   const publishedTarget = $("publishCenterPublished");
   const readyTarget = $("publishCenterReady");
+  const publishedFullTarget = $("publishCenterPublishedFull");
+  const readyFullTarget = $("publishCenterReadyFull");
+  const publishedTotal = Number(summary.published_count || published.length || 0);
+  const readyTotal = Number(summary.ready_count || ready.length || 0);
   if (publishedTarget) {
-    publishedTarget.innerHTML = published.length ? published.map((node) => publishCenterNodeCard(node, "published")).join("") : `<p class="hint">发布池为空。Bot 会提示“正在筛选中”，不会从有效节点库或优质候选兜底发放。</p>`;
+    publishedTarget.innerHTML = published.length ? published.slice(0, 10).map((node) => publishCenterNodeCard(node, "published")).join("") + publishMoreButton("published", publishedTotal) : `<p class="hint">发布池为空。Bot 会提示“正在筛选中”，不会从有效节点库或优质候选兜底发放。</p>`;
   }
   if (readyTarget) {
-    readyTarget.innerHTML = ready.length ? ready.map((node) => publishCenterNodeCard(node, "ready")).join("") : `<p class="hint">暂无准备发布候选。可先导入自建 CF 或刷新优质池，人工验收后再标记发布。</p>`;
+    readyTarget.innerHTML = ready.length ? ready.slice(0, 10).map((node) => publishCenterNodeCard(node, "ready")).join("") + publishMoreButton("ready", readyTotal) : `<p class="hint">暂无准备发布候选。可先导入自建 CF 或刷新优质池，人工验收后再标记发布。</p>`;
+  }
+  if (publishedFullTarget) {
+    publishedFullTarget.innerHTML = published.length ? published.map((node) => publishCenterNodeCard(node, "published")).join("") : `<p class="hint">发布池为空。Bot 不会从其它池兜底发放。</p>`;
+  }
+  if (readyFullTarget) {
+    readyFullTarget.innerHTML = ready.length ? ready.map((node) => publishCenterNodeCard(node, "ready")).join("") : `<p class="hint">暂无准备发布候选。</p>`;
   }
   bindPublishCenterActions();
+}
+
+function publishMoreButton(target, count) {
+  if (count <= 10) return "";
+  const label = target === "published" ? "查看全部正在发布" : "查看全部准备发布";
+  return `<div class="actions compact-actions publish-more"><button class="ghost" data-publish-open="${target}">${label}（${count}）</button></div>`;
 }
 
 function publishCenterNodeCard(node = {}, state = "ready") {
   const disabled = !!node.manual_disabled;
   const published = state === "published" || !!node.publish_enabled;
+  const nodeRef = node.node_ref || node.uri || "";
   const classes = ["node-card", "compact-node", published ? "published-node" : "", disabled ? "disabled-node" : ""].filter(Boolean).join(" ");
   const source = sourceTypeLabel(node.source_type || "");
   const cfLabel = node.cf_candidate ? "CF候选" : "普通候选";
@@ -1198,24 +1215,27 @@ function publishCenterNodeCard(node = {}, state = "ready") {
         <span>note ${escapeHtml(node.manual_note || "-")}</span>
       </div>
       <div class="actions compact-actions">
-        <button class="ghost" data-valid-copy="${escapeHtml(node.uri || "")}" ${disabled ? "disabled" : ""}>复制节点</button>
-        ${published ? `<button class="ghost" disabled>已发布 ✓</button><button class="danger" data-publish-remove="${escapeHtml(node.uri || "")}">移出发布池</button>` : `<button class="primary" data-publish-mark="1" data-uri="${escapeHtml(node.uri || "")}" ${disabled || node.publish_compatible === false ? "disabled" : ""}>标记可发布</button>`}
-        <button class="ghost" data-valid-disable="${escapeHtml(node.uri || "")}" ${disabled ? "disabled" : ""}>禁用</button>
-        <button class="danger" data-valid-delete="${escapeHtml(node.uri || "")}">删除</button>
+        <button class="ghost" data-valid-copy-ref="${escapeHtml(nodeRef)}" ${disabled ? "disabled" : ""}>复制节点</button>
+        ${published ? `<button class="ghost" disabled>已发布 ✓</button><button class="danger" data-publish-remove-ref="${escapeHtml(nodeRef)}">移出发布池</button>` : `<button class="primary" data-publish-mark="1" data-node-ref="${escapeHtml(nodeRef)}" ${disabled || node.publish_compatible === false ? "disabled" : ""}>标记可发布</button>`}
+        <button class="ghost" data-valid-disable-ref="${escapeHtml(nodeRef)}" ${disabled ? "disabled" : ""}>禁用</button>
+        <button class="danger" data-valid-delete-ref="${escapeHtml(nodeRef)}">删除</button>
       </div>
     </article>
   `;
 }
 
 function bindPublishCenterActions() {
-  document.querySelectorAll("#publishCenterPublished [data-valid-copy], #publishCenterReady [data-valid-copy]").forEach((button) => {
+  document.querySelectorAll("[data-publish-open]").forEach((button) => {
+    button.onclick = () => setPublishWorkbenchView(button.dataset.publishOpen || "overview");
+  });
+  document.querySelectorAll("#publishOverviewView [data-valid-copy-ref], #publishPublishedView [data-valid-copy-ref], #publishReadyView [data-valid-copy-ref]").forEach((button) => {
     button.onclick = async () => {
-      await copyValidNodes({ uri: button.dataset.validCopy || "" });
+      await copyValidNodes({ node_ref: button.dataset.validCopyRef || "" });
     };
   });
-  document.querySelectorAll("#publishCenterPublished [data-publish-remove], #publishCenterReady [data-publish-remove]").forEach((button) => {
+  document.querySelectorAll("#publishOverviewView [data-publish-remove-ref], #publishPublishedView [data-publish-remove-ref], #publishReadyView [data-publish-remove-ref]").forEach((button) => {
     button.onclick = async () => {
-      const data = await post(api("/api/publish-pool/remove"), { uri: button.dataset.publishRemove || "" });
+      const data = await post(api("/api/publish-pool/remove"), { node_ref: button.dataset.publishRemoveRef || "" });
       if (data) {
         renderPublishPool(data);
         await refreshPublishCenter();
@@ -1224,9 +1244,9 @@ function bindPublishCenterActions() {
       }
     };
   });
-  document.querySelectorAll("#publishCenterReady [data-publish-mark]").forEach((button) => {
+  document.querySelectorAll("#publishOverviewView [data-publish-mark], #publishReadyView [data-publish-mark]").forEach((button) => {
     button.onclick = async () => {
-      const data = await post(api("/api/publish-pool/mark"), { uri: button.dataset.uri || "", publishable: true });
+      const data = await post(api("/api/publish-pool/mark"), { node_ref: button.dataset.nodeRef || "", publishable: true });
       if (data) {
         renderPublishPool(data);
         await refreshPublishCenter();
@@ -1235,26 +1255,52 @@ function bindPublishCenterActions() {
       }
     };
   });
-  document.querySelectorAll("#publishCenterPublished [data-valid-disable], #publishCenterReady [data-valid-disable]").forEach((button) => {
+  document.querySelectorAll("#publishOverviewView [data-valid-disable-ref], #publishPublishedView [data-valid-disable-ref], #publishReadyView [data-valid-disable-ref]").forEach((button) => {
     button.onclick = async () => {
       if (!confirm("确定禁用这个节点吗？禁用后会同步移出优质池、发布池并清空转换缓存。")) return;
-      await post(api("/api/valid-nodes/disable"), { uri: button.dataset.validDisable || "", reason: "manual_node_disable" });
+      await post(api("/api/valid-nodes/disable"), { node_ref: button.dataset.validDisableRef || "", reason: "manual_node_disable" });
       await refreshPublishCenter();
       await refreshNodes();
       await refreshPublishPool();
       toast("节点已禁用");
     };
   });
-  document.querySelectorAll("#publishCenterPublished [data-valid-delete], #publishCenterReady [data-valid-delete]").forEach((button) => {
+  document.querySelectorAll("#publishOverviewView [data-valid-delete-ref], #publishPublishedView [data-valid-delete-ref], #publishReadyView [data-valid-delete-ref]").forEach((button) => {
     button.onclick = async () => {
       if (!confirm("确定删除这个节点吗？删除后会同步移出优质池、发布池并清空转换缓存。")) return;
-      await post(api("/api/valid-nodes/delete"), { uri: button.dataset.validDelete || "", reason: "manual_node_delete" });
+      await post(api("/api/valid-nodes/delete"), { node_ref: button.dataset.validDeleteRef || "", reason: "manual_node_delete" });
       await refreshPublishCenter();
       await refreshNodes();
       await refreshPublishPool();
       toast("节点已删除");
     };
   });
+}
+
+function setPublishWorkbenchView(view = "overview") {
+  const normalized = ["overview", "published", "ready", "inventory", "disabled"].includes(view) ? view : "overview";
+  document.querySelectorAll("[data-publish-tab]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.publishTab === normalized);
+  });
+  const visibleView = normalized === "disabled" ? "inventory" : normalized;
+  const map = {
+    overview: "publishOverviewView",
+    published: "publishPublishedView",
+    ready: "publishReadyView",
+    inventory: "publishInventoryView",
+  };
+  Object.entries(map).forEach(([key, id]) => {
+    const element = $(id);
+    if (element) element.classList.toggle("active", key === visibleView);
+  });
+  if (normalized === "inventory" || normalized === "disabled") {
+    const targetGroup = normalized === "disabled" ? "disabled" : "";
+    if ($("validGroup").value !== targetGroup) {
+      $("validGroup").value = targetGroup;
+      page = 1;
+      refreshNodes();
+    }
+  }
 }
 
 async function refreshNodes() {
@@ -2483,6 +2529,9 @@ document.querySelectorAll(".tab").forEach((button) => button.onclick = () => {
   renderLogs();
 });
 document.querySelectorAll(".ops-tabs .page-tab").forEach((button) => button.onclick = () => setGroupedPage(button));
+document.querySelectorAll("[data-publish-tab]").forEach((button) => {
+  button.onclick = () => setPublishWorkbenchView(button.dataset.publishTab || "overview");
+});
 
 async function startDashboard() {
   refreshStatus.autoConfigLoaded = false;
@@ -2507,6 +2556,7 @@ async function startDashboard() {
     refreshBot(),
   ]);
   updateSubscriptionMode();
+  setPublishWorkbenchView("overview");
   connectLogs();
 }
 

@@ -309,6 +309,9 @@ h2 { font-size: 20px; letter-spacing: 0; }
 .auto-console { margin-bottom: 16px; }
 .notice-card { margin-top: 12px; border: 1px solid #b9e3dc; border-radius: 8px; padding: 12px 14px; background: #e7f7f4; color: #0b5f55; }
 .publish-center-shell { margin-top: 14px; border: 1px solid var(--border); border-radius: 8px; padding: 14px; background: var(--surface-2); }
+.publish-workbench-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 4px; }
+.publish-workbench-view { display: none; }
+.publish-workbench-view.active { display: block; }
 .publish-summary-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 10px; margin-top: 12px; }
 .publish-summary-grid article { min-width: 0; border: 1px solid var(--border); border-left: 4px solid var(--accent); border-radius: 8px; padding: 10px 12px; background: var(--surface); }
 .publish-summary-grid span { display: block; overflow: hidden; color: var(--muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
@@ -319,6 +322,8 @@ h2 { font-size: 20px; letter-spacing: 0; }
 .publish-column.published { border-color: #93d0aa; box-shadow: inset 4px 0 0 var(--success); }
 .publish-column.ready { border-color: #b9d3ef; box-shadow: inset 4px 0 0 var(--accent); }
 .publish-center-list { max-height: 560px; overflow: auto; padding-right: 2px; }
+.publish-center-list.full-list { max-height: none; overflow: visible; }
+.publish-more { justify-content: flex-start; margin-top: 8px; }
 .auto-status-grid, .auto-progress-grid { display: grid; gap: 10px; margin-top: 12px; }
 .auto-status-grid { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
 .auto-progress-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }

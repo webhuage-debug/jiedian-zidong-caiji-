@@ -408,8 +408,8 @@ class NodeDatabaseTest(unittest.TestCase):
                 database.disable_valid_node(disabled_uri, "manual bad")
 
                 summary = database.publish_center_summary()
-                published = database.publish_center_published()
-                ready = database.publish_center_ready()
+                published = database.publish_center_published(expose_uri=True)
+                ready = database.publish_center_ready(expose_uri=True)
 
                 self.assertEqual(summary["published_count"], 1)
                 self.assertEqual(summary["valid_count"], 3)
@@ -422,6 +422,17 @@ class NodeDatabaseTest(unittest.TestCase):
                 self.assertIn(manual_cf_uri, ready_uris)
                 self.assertNotIn(published_uri, ready_uris)
                 self.assertNotIn(disabled_uri, ready_uris)
+                self.assertEqual(summary["published_count"], len(published))
+                self.assertEqual(summary["ready_count"], len(ready))
+
+                database.mark_publish_node(premium_ready_uri, True)
+                after_mark = database.publish_center_summary()
+                self.assertEqual(after_mark["published_count"], summary["published_count"] + 1)
+                self.assertEqual(after_mark["ready_count"], summary["ready_count"] - 1)
+
+                database.remove_publish_node(premium_ready_uri)
+                after_remove = database.publish_center_summary()
+                self.assertEqual(after_remove["published_count"], summary["published_count"])
 
     def test_manual_import_valid_nodes_deduplicates_and_rejects_bad_lines(self):
         with tempfile.TemporaryDirectory() as directory:
